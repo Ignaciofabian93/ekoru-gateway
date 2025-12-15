@@ -1,0 +1,20 @@
+services:
+  ekoru-gateway-qa:
+    image: ekoru-gateway:qa
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    container_name: ekoru-gateway-qa
+    env_file:
+      - .env.qa
+    ports:
+      - '9000:9000'
+    networks:
+      - ekoru-network
+    volumes:
+      - /home/ekoru/images:/app/images
+
+networks:
+  ekoru-network:
+    external: true

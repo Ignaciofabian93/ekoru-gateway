@@ -3,6 +3,10 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - addgroup
+  - adduser
+  - appgroup
+  - appuser
   - dockerfile
   - ekoru
   - grafana
