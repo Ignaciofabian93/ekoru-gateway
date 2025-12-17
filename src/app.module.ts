@@ -10,6 +10,7 @@ import {
 import { AuthModule } from './auth/auth.module';
 import { ImagesModule } from './images/images.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { HealthController } from './health/health.controller';
 
 interface GatewayContext {
   token?: string;
@@ -116,5 +117,6 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
     ImagesModule,
     PrismaModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}
