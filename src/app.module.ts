@@ -74,10 +74,10 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
         };
 
         const subgraphs = [
-          { name: 'users', url: getServiceUrl('USER') },
+          // { name: 'users', url: getServiceUrl('USER') },
           // { name: 'products', url: getServiceUrl('PRODUCT') },
           // { name: 'services', url: getServiceUrl('SERVICES') },
-          // { name: 'blog', url: getServiceUrl('BLOG') },
+          { name: 'blog', url: getServiceUrl('BLOG') },
           // { name: 'search', url: getServiceUrl('SEARCH') },
           // { name: 'transaction', url: getServiceUrl('TRANSACTION') },
         ].filter((s) => s.url);
