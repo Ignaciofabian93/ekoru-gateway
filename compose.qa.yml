@@ -14,6 +14,28 @@ services:
       - ekoru-network
     volumes:
       - /home/ekoru/images:/app/images
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0' # Maximum 1 CPU core (gateway handles all traffic)
+          memory: 512M # Maximum 512MB RAM
+        reservations:
+          cpus: '0.25' # Minimum 0.25 CPU cores reserved
+          memory: 256M # Minimum 256MB RAM reserved
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--quiet',
+          '--tries=1',
+          '--spider',
+          'http://localhost:9000/health',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 networks:
   ekoru-network:
