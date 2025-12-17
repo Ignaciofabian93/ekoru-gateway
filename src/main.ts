@@ -9,7 +9,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   const environment = configService.get<string>('ENVIRONMENT', 'development');
-  const port = configService.get<number>('PORT', 9000);
+  const port = configService.get<number>('PORT', 4000);
 
   // CORS configuration based on environment
   const origin =

@@ -9,7 +9,7 @@ services:
     env_file:
       - .env.qa
     ports:
-      - '9000:9000'
+      - '4000:4000'
     networks:
       - ekoru-network
     volumes:
