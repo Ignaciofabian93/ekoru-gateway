@@ -78,8 +78,6 @@ export class ProductImagesController {
       data: { images: imagePaths },
     });
 
-    console.log('Product images uploaded for product: ' + productId);
-
     return {
       message: 'Files uploaded successfully',
       imagePaths,

@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -10,6 +11,24 @@ async function bootstrap() {
 
   const environment = configService.get<string>('ENVIRONMENT', 'development');
   const port = configService.get<number>('PORT', 4000);
+
+  // Security headers with Helmet
+  app.use(
+    helmet({
+      contentSecurityPolicy:
+        environment === 'production'
+          ? {
+              directives: {
+                defaultSrc: ["'self'"],
+                styleSrc: ["'self'", "'unsafe-inline'"],
+                scriptSrc: ["'self'"],
+                imgSrc: ["'self'", 'data:', 'https:'],
+              },
+            }
+          : false, // Disable CSP in development for GraphQL playground
+      crossOriginEmbedderPolicy: false, // Allow GraphQL playground to load
+    }),
+  );
 
   // CORS configuration based on environment
   const origin =
@@ -22,6 +41,8 @@ async function bootstrap() {
   app.enableCors({
     origin,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
   });
 
   // Cookie parser middleware

@@ -66,8 +66,6 @@ export class CoverImageController {
     // Update database
     await this.updateUserCoverImage(userId, imagePath);
 
-    console.log('Cover image uploaded: ' + fileName + ' for user: ' + userId);
-
     return {
       message: 'File uploaded and processed successfully',
       imagePath,

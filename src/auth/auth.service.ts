@@ -52,18 +52,19 @@ export class AuthService {
     const isSecure = environment === 'production' || environment === 'qa';
     const domain = isSecure ? '.ekoru.cl' : undefined;
 
+    // Always use httpOnly for security
     res.cookie('token', token, {
-      httpOnly: isSecure,
+      httpOnly: true,
       secure: isSecure,
-      sameSite: 'lax',
+      sameSite: isSecure ? 'strict' : 'lax',
       maxAge: 15 * 60 * 1000, // 15 minutes
       domain,
     });
 
     res.cookie('refreshToken', refreshToken, {
-      httpOnly: isSecure,
+      httpOnly: true,
       secure: isSecure,
-      sameSite: 'lax',
+      sameSite: isSecure ? 'strict' : 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       domain,
     });
@@ -97,9 +98,9 @@ export class AuthService {
       const domain = isSecure ? '.ekoru.cl' : undefined;
 
       res.cookie('token', newToken, {
-        httpOnly: isSecure,
+        httpOnly: true,
         secure: isSecure,
-        sameSite: 'lax',
+        sameSite: isSecure ? 'strict' : 'lax',
         maxAge: 15 * 60 * 1000,
         domain,
       });
@@ -136,5 +137,31 @@ export class AuthService {
       console.error('Error decoding token with both secrets:', error);
       return null;
     }
+  }
+
+  logout(res: Response) {
+    const environment = this.configService.get<string>(
+      'ENVIRONMENT',
+      'development',
+    );
+    const isSecure = environment === 'production' || environment === 'qa';
+    const domain = isSecure ? '.ekoru.cl' : undefined;
+
+    // Clear both cookies
+    res.clearCookie('token', {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: isSecure ? 'strict' : 'lax',
+      domain,
+    });
+
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: isSecure ? 'strict' : 'lax',
+      domain,
+    });
+
+    return { success: true, message: 'Sesión cerrada exitosamente' };
   }
 }

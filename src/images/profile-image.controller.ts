@@ -62,8 +62,6 @@ export class ProfileImageController {
     // Update database
     await this.updateUserProfileImage(userId, imagePath);
 
-    console.log('Profile image uploaded: ' + fileName + ' for user: ' + userId);
-
     return {
       message: 'File uploaded and processed successfully',
       imagePath,

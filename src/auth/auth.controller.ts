@@ -26,4 +26,9 @@ export class AuthController {
   ) {
     return this.authService.refreshToken(refreshToken, res);
   }
+
+  @Post('logout')
+  logout(@Res({ passthrough: true }) res: Response) {
+    return this.authService.logout(res);
+  }
 }
