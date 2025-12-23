@@ -107,18 +107,16 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
               : environment === 'qa'
                 ? 'QA'
                 : 'PROD';
-          return configService.get<string>(
-            `${service}_SERVICE_${envPrefix}_URL`,
-          );
+          return configService.get<string>(`EKORU_${service}_${envPrefix}_URL`);
         };
 
         const subgraphs = [
-          { name: 'users', url: getServiceUrl('USER') },
-          { name: 'products', url: getServiceUrl('PRODUCT') },
-          // { name: 'services', url: getServiceUrl('SERVICES') },
-          { name: 'blog', url: getServiceUrl('BLOG') },
-          // { name: 'search', url: getServiceUrl('SEARCH') },
-          // { name: 'transaction', url: getServiceUrl('TRANSACTION') },
+          { name: 'users', url: getServiceUrl('USERS') },
+          { name: 'marketplace', url: getServiceUrl('MARKETPLACE') },
+          { name: 'stores', url: getServiceUrl('STORES') },
+          { name: 'services', url: getServiceUrl('SERVICES') },
+          { name: 'search', url: getServiceUrl('SEARCH') },
+          { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
         ].filter((s) => s.url);
 
         const jwtSecret = configService.get<string>('JWT_SECRET') || '';
