@@ -35,7 +35,7 @@ async function bootstrap() {
     environment === 'development'
       ? 'http://localhost:3000'
       : environment === 'qa'
-        ? 'https://qa.app.ekoru.cl'
+        ? ['https://qa.app.ekoru.cl', 'http://localhost:3000']
         : 'https://app.ekoru.cl';
 
   app.enableCors({
