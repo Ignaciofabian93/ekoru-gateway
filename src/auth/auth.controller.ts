@@ -1,5 +1,5 @@
-import { Controller, Post, Body, Res } from '@nestjs/common';
-import type { Response } from 'express';
+import { Controller, Post, Body, Res, Req } from '@nestjs/common';
+import type { Response, Request } from 'express';
 import { AuthService } from './auth.service';
 
 class LoginDto {
@@ -22,9 +22,11 @@ export class AuthController {
   @Post('refresh')
   refreshToken(
     @Body('refreshToken') refreshToken: string,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.refreshToken(refreshToken, res);
+    const token: string = refreshToken || (req.cookies?.refreshToken as string);
+    return this.authService.refreshToken(token, res);
   }
 
   @Post('logout')
