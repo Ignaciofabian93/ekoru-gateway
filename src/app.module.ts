@@ -14,6 +14,7 @@ import { AuthModule } from './auth/auth.module';
 import { ImagesModule } from './images/images.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
+import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 
 interface GatewayContext {
   token?: string;
@@ -78,6 +79,12 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
 
 @Module({
   imports: [
+    // Metrics
+    PrometheusModule.register({
+      path: '/metrics',
+      defaultMetrics: { enabled: true },
+    }),
+
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -115,8 +122,10 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
           { name: 'marketplace', url: getServiceUrl('MARKETPLACE') },
           { name: 'stores', url: getServiceUrl('STORES') },
           { name: 'services', url: getServiceUrl('SERVICES') },
-          { name: 'search', url: getServiceUrl('SEARCH') },
           { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
+          { name: 'search', url: getServiceUrl('SEARCH') },
+          { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
+          // { name: 'notifications', url: getServiceUrl('NOTIFICATIONS') },
         ].filter((s) => s.url);
 
         const jwtSecret = configService.get<string>('JWT_SECRET') || '';
