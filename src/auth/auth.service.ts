@@ -8,6 +8,8 @@ import { ConfigService } from '@nestjs/config';
 import { compare } from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { Response } from 'express';
+import { I18nService } from '../common/i18n';
+import { DEFAULT_LANGUAGE, type SupportedLanguage } from '../i18n/messages';
 
 @Injectable()
 export class AuthService {
@@ -15,21 +17,56 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly i18nService: I18nService,
   ) {}
 
-  async login(email: string, password: string, res: Response) {
+  private setCookies(res: Response, token: string, refreshToken: string) {
+    const environment = this.configService.get<string>(
+      'ENVIRONMENT',
+      'development',
+    );
+    const isSecure = environment === 'production' || environment === 'qa';
+    const domain = isSecure ? '.ekoru.cl' : undefined;
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: isSecure ? 'strict' : 'lax',
+      maxAge: 15 * 60 * 1000,
+      domain,
+    });
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: isSecure ? 'strict' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      domain,
+    });
+  }
+
+  async login(
+    email: string,
+    password: string,
+    res: Response,
+    language: SupportedLanguage = DEFAULT_LANGUAGE,
+  ) {
     const formattedEmail = email.toLowerCase();
     const user = await this.prisma.seller.findUnique({
       where: { email: formattedEmail },
     });
 
     if (!user) {
-      throw new BadRequestException('No se encontró al usuario');
+      throw new BadRequestException(
+        this.i18nService.translate('auth.user_not_found', language),
+      );
     }
 
     const valid = await compare(password, user.password);
     if (!valid) {
-      throw new BadRequestException('Credenciales inválidas');
+      throw new BadRequestException(
+        this.i18nService.translate('auth.invalid_credentials', language),
+      );
     }
 
     const token = this.jwtService.sign(
@@ -45,37 +82,91 @@ export class AuthService {
       },
     );
 
-    const environment = this.configService.get<string>(
-      'ENVIRONMENT',
-      'development',
-    );
-    const isSecure = environment === 'production' || environment === 'qa';
-    const domain = isSecure ? '.ekoru.cl' : undefined;
+    this.setCookies(res, token, refreshToken);
 
-    // Always use httpOnly for security
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: isSecure,
-      sameSite: isSecure ? 'strict' : 'lax',
-      maxAge: 15 * 60 * 1000, // 15 minutes
-      domain,
-    });
-
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: isSecure,
-      sameSite: isSecure ? 'strict' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      domain,
-    });
-
-    return { token, message: 'Inicio de sesión exitoso' };
+    return {
+      token,
+      refreshToken,
+      message: this.i18nService.translate('auth.login_success', language),
+    };
   }
 
-  refreshToken(refreshToken: string, res: Response) {
+  async loginAdmin(
+    email: string,
+    password: string,
+    res: Response,
+    language: SupportedLanguage = DEFAULT_LANGUAGE,
+  ) {
+    const formattedEmail = email.toLowerCase();
+    const admin = await this.prisma.admin.findUnique({
+      where: { email: formattedEmail },
+    });
+
+    if (!admin) {
+      throw new BadRequestException(
+        this.i18nService.translate('auth.admin_not_found', language),
+      );
+    }
+
+    if (!admin.isActive) {
+      throw new BadRequestException(
+        this.i18nService.translate('auth.account_disabled', language),
+      );
+    }
+
+    if (admin.accountLocked) {
+      throw new BadRequestException(
+        this.i18nService.translate('auth.account_locked', language),
+      );
+    }
+
+    const valid = await compare(password, admin.password);
+    if (!valid) {
+      // Increment failed attempts
+      await this.prisma.admin.update({
+        where: { id: admin.id },
+        data: { loginAttempts: { increment: 1 } },
+      });
+      throw new BadRequestException(
+        this.i18nService.translate('auth.invalid_credentials', language),
+      );
+    }
+
+    // Reset attempts on success and record last login
+    await this.prisma.admin.update({
+      where: { id: admin.id },
+      data: { loginAttempts: 0, lastLoginAt: new Date() },
+    });
+
+    const token = this.jwtService.sign(
+      { adminId: admin.id },
+      { expiresIn: '15m' },
+    );
+
+    const refreshToken = this.jwtService.sign(
+      { adminId: admin.id },
+      {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+        expiresIn: '7d',
+      },
+    );
+
+    this.setCookies(res, token, refreshToken);
+
+    return {
+      token,
+      message: this.i18nService.translate('auth.login_success', language),
+    };
+  }
+
+  refreshToken(
+    refreshToken: string,
+    res: Response,
+    language: SupportedLanguage = DEFAULT_LANGUAGE,
+  ) {
     if (!refreshToken) {
       throw new UnauthorizedException(
-        'No se pudo generar un nuevo token de acceso',
+        this.i18nService.translate('auth.token_refresh_failed', language),
       );
     }
 
@@ -107,7 +198,54 @@ export class AuthService {
 
       return { token: newToken, success: true };
     } catch {
-      throw new UnauthorizedException('Token de acceso inválido');
+      throw new UnauthorizedException(
+        this.i18nService.translate('auth.token_invalid', language),
+      );
+    }
+  }
+
+  refreshAdminToken(
+    refreshToken: string,
+    res: Response,
+    language: SupportedLanguage = DEFAULT_LANGUAGE,
+  ) {
+    if (!refreshToken) {
+      throw new UnauthorizedException(
+        this.i18nService.translate('auth.token_refresh_failed', language),
+      );
+    }
+
+    try {
+      const payload: { adminId: string } = this.jwtService.verify(
+        refreshToken,
+        { secret: this.configService.get<string>('JWT_REFRESH_SECRET') },
+      );
+
+      const newToken = this.jwtService.sign(
+        { adminId: payload.adminId },
+        { expiresIn: '15m' },
+      );
+
+      const environment = this.configService.get<string>(
+        'ENVIRONMENT',
+        'development',
+      );
+      const isSecure = environment === 'production' || environment === 'qa';
+      const domain = isSecure ? '.ekoru.cl' : undefined;
+
+      res.cookie('token', newToken, {
+        httpOnly: true,
+        secure: isSecure,
+        sameSite: isSecure ? 'strict' : 'lax',
+        maxAge: 15 * 60 * 1000,
+        domain,
+      });
+
+      return { token: newToken, success: true };
+    } catch {
+      throw new UnauthorizedException(
+        this.i18nService.translate('auth.token_invalid', language),
+      );
     }
   }
 
@@ -162,6 +300,12 @@ export class AuthService {
       domain,
     });
 
-    return { success: true, message: 'Sesión cerrada exitosamente' };
+    return {
+      success: true,
+      message: this.i18nService.translate(
+        'auth.session_closed',
+        DEFAULT_LANGUAGE,
+      ),
+    };
   }
 }

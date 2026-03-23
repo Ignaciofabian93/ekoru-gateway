@@ -19,6 +19,7 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 interface GatewayContext {
   token?: string;
   sellerId?: string;
+  adminId?: string;
   extensions?: {
     sellerId?: string;
   };
@@ -41,10 +42,13 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
     if (!request.http) return;
 
     const gatewayContext = context as GatewayContext;
+    console.log('gateway context token:: ', gatewayContext?.token);
 
     // Only forward token if it's valid
     if (gatewayContext?.token) {
       const isValid = this.validateToken(gatewayContext.token);
+      console.log('ISVALID:: ', isValid);
+
       if (isValid) {
         request.http.headers.set(
           'Authorization',
@@ -57,6 +61,11 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
       gatewayContext?.sellerId || gatewayContext?.extensions?.sellerId;
     if (sellerId) {
       request.http.headers.set('x-seller-id', sellerId);
+    }
+    console.log('SELLER ID:: ', sellerId);
+
+    if (gatewayContext?.adminId) {
+      request.http.headers.set('x-admin-id', gatewayContext.adminId);
     }
   }
 
@@ -120,11 +129,11 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
         const subgraphs = [
           { name: 'users', url: getServiceUrl('USERS') },
           { name: 'marketplace', url: getServiceUrl('MARKETPLACE') },
-          { name: 'stores', url: getServiceUrl('STORES') },
-          { name: 'services', url: getServiceUrl('SERVICES') },
-          { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
-          { name: 'search', url: getServiceUrl('SEARCH') },
-          { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
+          // { name: 'stores', url: getServiceUrl('STORES') },
+          // { name: 'services', url: getServiceUrl('SERVICES') },
+          // { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
+          // { name: 'search', url: getServiceUrl('SEARCH') },
+          // { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
           // { name: 'notifications', url: getServiceUrl('NOTIFICATIONS') },
         ].filter((s) => s.url);
 
@@ -150,37 +159,51 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
             context: ({ req, res }: { req: any; res: any }) => {
               /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
               // Extract token from cookies or headers
-              const cookieToken =
-                req.cookies?.token || req.cookies?.refreshToken;
-              const headerToken = req.headers?.authorization?.split(' ')[1];
-              const token: string = cookieToken || headerToken || '';
+              const accessToken: string =
+                req.cookies?.token ||
+                req.headers?.authorization?.split(' ')[1] ||
+                '';
+              const refreshToken: string = req.cookies?.refreshToken || '';
 
-              // Extract and verify sellerId from token
-              let sellerId: string | undefined;
-              if (token) {
+              let token = '';
+              let decoded: {
+                sellerId?: string;
+                adminId?: string;
+              } | null = null;
+
+              if (accessToken) {
                 try {
-                  const decoded = verify(token, jwtSecret) as {
-                    sellerId: string;
+                  decoded = verify(accessToken, jwtSecret) as {
+                    sellerId?: string;
+                    adminId?: string;
                   };
-                  sellerId = decoded.sellerId;
+                  token = accessToken;
                 } catch {
-                  // Try refresh secret
-                  try {
-                    const decoded = verify(token, jwtRefreshSecret) as {
-                      sellerId: string;
-                    };
-                    sellerId = decoded.sellerId;
-                  } catch {
-                    // Invalid token - sellerId remains undefined
-                  }
+                  // expired or invalid access token, fall through to refresh
                 }
               }
+
+              if (!decoded && refreshToken) {
+                try {
+                  decoded = verify(refreshToken, jwtRefreshSecret) as {
+                    sellerId?: string;
+                    adminId?: string;
+                  };
+                  token = refreshToken;
+                } catch {
+                  // refresh token also invalid
+                }
+              }
+
+              const sellerId = decoded?.sellerId;
+              const adminId = decoded?.adminId;
 
               return {
                 req,
                 res,
                 token,
                 sellerId,
+                adminId,
               } as GatewayContext & { req: any; res: any };
               /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
             },

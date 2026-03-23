@@ -1,14 +1,17 @@
 import {
   Controller,
   Post,
-  Body,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImagesService } from './images.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 const imageFileFilter = (
   req: any,
@@ -30,6 +33,7 @@ export class ProfileImageController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('file', {
       fileFilter: imageFileFilter,
@@ -38,15 +42,13 @@ export class ProfileImageController {
   )
   async uploadProfileImage(
     @UploadedFile() file: Express.Multer.File,
-    @Body('userId') userId: string,
+    @Req() req: Request & { user: { sellerId: string } },
   ) {
     if (!file) {
       throw new BadRequestException('No file received');
     }
 
-    if (!userId) {
-      throw new BadRequestException('User ID is required');
-    }
+    const userId = req.user.sellerId;
 
     // Delete existing profile image
     await this.deleteExistingProfileImage(userId);
@@ -58,9 +60,20 @@ export class ProfileImageController {
       'profile-images',
       fileName,
     );
+    console.log('NAME:: ', fileName);
+    console.log('PATH:: ', imagePath);
 
     // Update database
     await this.updateUserProfileImage(userId, imagePath);
+
+    console.log('RETURN:: ', {
+      message: 'File uploaded and processed successfully',
+      imagePath,
+      imageUrl: this.imagesService.getFullUrl(imagePath),
+      fileName,
+      originalSize: file.size,
+      processedSize: file.buffer.length,
+    });
 
     return {
       message: 'File uploaded and processed successfully',

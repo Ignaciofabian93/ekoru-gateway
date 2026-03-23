@@ -1,14 +1,17 @@
 import {
   Controller,
   Post,
-  Body,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImagesService } from './images.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 const imageFileFilter = (
   req: any,
@@ -34,6 +37,7 @@ export class CoverImageController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('file', {
       fileFilter: imageFileFilter,
@@ -42,15 +46,13 @@ export class CoverImageController {
   )
   async uploadCoverImage(
     @UploadedFile() file: Express.Multer.File,
-    @Body('userId') userId: string,
+    @Req() req: Request & { user: { sellerId: string } },
   ) {
     if (!file) {
       throw new BadRequestException('No file received');
     }
 
-    if (!userId) {
-      throw new BadRequestException('User ID is required');
-    }
+    const userId = req.user.sellerId;
 
     // Delete existing cover image
     await this.deleteExistingCoverImage(userId);

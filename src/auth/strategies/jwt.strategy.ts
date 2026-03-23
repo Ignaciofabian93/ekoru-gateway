@@ -9,13 +9,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(private configService: ConfigService) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
-        // Extract from cookie first
+        // Extract access token cookie only (not refreshToken — it's signed with a different secret)
         (request: Request) => {
-          return (request?.cookies?.token || request?.cookies?.refreshToken) as
-            | string
-            | null;
+          return (request?.cookies?.token as string | undefined) ?? null;
         },
-        // Then try Authorization header
+        // Then try Authorization header (used by mobile clients)
         ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       ignoreExpiration: false,

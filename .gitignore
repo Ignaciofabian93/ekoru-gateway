@@ -6,3 +6,4 @@
 .env.qa
 .env.prod
 .vscode
+.cspell

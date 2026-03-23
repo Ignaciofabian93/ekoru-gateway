@@ -31,9 +31,11 @@ async function bootstrap() {
   );
 
   // CORS configuration based on environment
+  // Development uses `true` to reflect any origin back — required for React Native
+  // which sends a null/absent Origin header from the device.
   const origin =
     environment === 'development'
-      ? 'http://localhost:3000'
+      ? true
       : environment === 'qa'
         ? ['https://qa.app.ekoru.cl', 'http://localhost:3000']
         : 'https://app.ekoru.cl';
