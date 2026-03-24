@@ -10,6 +10,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Response } from 'express';
 import { I18nService } from '../common/i18n';
 import { DEFAULT_LANGUAGE, type SupportedLanguage } from '../i18n/messages';
+import { TokenRepository } from './token.repository';
+
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
@@ -18,6 +21,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly i18nService: I18nService,
+    private readonly tokenRepository: TokenRepository,
   ) {}
 
   private setCookies(res: Response, token: string, refreshToken: string) {
@@ -40,8 +44,15 @@ export class AuthService {
       httpOnly: true,
       secure: isSecure,
       sameSite: isSecure ? 'strict' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: REFRESH_TOKEN_TTL_MS,
       domain,
+    });
+  }
+
+  private signRefreshToken(payload: Record<string, string>): string {
+    return this.jwtService.sign(payload, {
+      secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+      expiresIn: '7d',
     });
   }
 
@@ -51,6 +62,8 @@ export class AuthService {
     res: Response,
     language: SupportedLanguage = DEFAULT_LANGUAGE,
   ) {
+    console.log('DATA:: ', email, password);
+
     const formattedEmail = email.toLowerCase();
     const user = await this.prisma.seller.findUnique({
       where: { email: formattedEmail },
@@ -74,12 +87,13 @@ export class AuthService {
       { expiresIn: '15m' },
     );
 
-    const refreshToken = this.jwtService.sign(
-      { sellerId: user.id },
-      {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-        expiresIn: '7d',
-      },
+    const refreshToken = this.signRefreshToken({ sellerId: user.id });
+
+    await this.tokenRepository.save(
+      refreshToken,
+      user.id,
+      'seller',
+      new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
     );
 
     this.setCookies(res, token, refreshToken);
@@ -122,7 +136,6 @@ export class AuthService {
 
     const valid = await compare(password, admin.password);
     if (!valid) {
-      // Increment failed attempts
       await this.prisma.admin.update({
         where: { id: admin.id },
         data: { loginAttempts: { increment: 1 } },
@@ -132,7 +145,6 @@ export class AuthService {
       );
     }
 
-    // Reset attempts on success and record last login
     await this.prisma.admin.update({
       where: { id: admin.id },
       data: { loginAttempts: 0, lastLoginAt: new Date() },
@@ -143,12 +155,13 @@ export class AuthService {
       { expiresIn: '15m' },
     );
 
-    const refreshToken = this.jwtService.sign(
-      { adminId: admin.id },
-      {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-        expiresIn: '7d',
-      },
+    const refreshToken = this.signRefreshToken({ adminId: admin.id });
+
+    await this.tokenRepository.save(
+      refreshToken,
+      admin.id,
+      'admin',
+      new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
     );
 
     this.setCookies(res, token, refreshToken);
@@ -159,7 +172,7 @@ export class AuthService {
     };
   }
 
-  refreshToken(
+  async refreshToken(
     refreshToken: string,
     res: Response,
     language: SupportedLanguage = DEFAULT_LANGUAGE,
@@ -176,35 +189,44 @@ export class AuthService {
         { secret: this.configService.get<string>('JWT_REFRESH_SECRET') },
       );
 
+      const revoked = await this.tokenRepository.isRevoked(refreshToken);
+      if (revoked) {
+        throw new UnauthorizedException(
+          this.i18nService.translate('auth.token_revoked', language),
+        );
+      }
+
+      // Rotate: revoke the used token and issue a new pair
+      await this.tokenRepository.revoke(refreshToken);
+
       const newToken = this.jwtService.sign(
         { sellerId: payload.sellerId },
         { expiresIn: '15m' },
       );
 
-      const environment = this.configService.get<string>(
-        'ENVIRONMENT',
-        'development',
-      );
-      const isSecure = environment === 'production' || environment === 'qa';
-      const domain = isSecure ? '.ekoru.cl' : undefined;
-
-      res.cookie('token', newToken, {
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: isSecure ? 'strict' : 'lax',
-        maxAge: 15 * 60 * 1000,
-        domain,
+      const newRefreshToken = this.signRefreshToken({
+        sellerId: payload.sellerId,
       });
 
-      return { token: newToken, success: true };
-    } catch {
+      await this.tokenRepository.save(
+        newRefreshToken,
+        payload.sellerId,
+        'seller',
+        new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+      );
+
+      this.setCookies(res, newToken, newRefreshToken);
+
+      return { token: newToken, refreshToken: newRefreshToken, success: true };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException(
         this.i18nService.translate('auth.token_invalid', language),
       );
     }
   }
 
-  refreshAdminToken(
+  async refreshAdminToken(
     refreshToken: string,
     res: Response,
     language: SupportedLanguage = DEFAULT_LANGUAGE,
@@ -221,28 +243,36 @@ export class AuthService {
         { secret: this.configService.get<string>('JWT_REFRESH_SECRET') },
       );
 
+      const revoked = await this.tokenRepository.isRevoked(refreshToken);
+      if (revoked) {
+        throw new UnauthorizedException(
+          this.i18nService.translate('auth.token_revoked', language),
+        );
+      }
+
+      await this.tokenRepository.revoke(refreshToken);
+
       const newToken = this.jwtService.sign(
         { adminId: payload.adminId },
         { expiresIn: '15m' },
       );
 
-      const environment = this.configService.get<string>(
-        'ENVIRONMENT',
-        'development',
-      );
-      const isSecure = environment === 'production' || environment === 'qa';
-      const domain = isSecure ? '.ekoru.cl' : undefined;
-
-      res.cookie('token', newToken, {
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: isSecure ? 'strict' : 'lax',
-        maxAge: 15 * 60 * 1000,
-        domain,
+      const newRefreshToken = this.signRefreshToken({
+        adminId: payload.adminId,
       });
 
-      return { token: newToken, success: true };
-    } catch {
+      await this.tokenRepository.save(
+        newRefreshToken,
+        payload.adminId,
+        'admin',
+        new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+      );
+
+      this.setCookies(res, newToken, newRefreshToken);
+
+      return { token: newToken, refreshToken: newRefreshToken, success: true };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException(
         this.i18nService.translate('auth.token_invalid', language),
       );
@@ -254,7 +284,6 @@ export class AuthService {
       return null;
     }
 
-    // First try to decode with regular JWT secret
     try {
       const decoded: { sellerId: string } = this.jwtService.verify(token);
       return decoded;
@@ -264,7 +293,6 @@ export class AuthService {
       );
     }
 
-    // If regular JWT fails, try with refresh JWT secret
     try {
       const refreshDecoded: { sellerId: string } = this.jwtService.verify(
         token,
@@ -277,7 +305,11 @@ export class AuthService {
     }
   }
 
-  logout(res: Response) {
+  async logout(res: Response, refreshToken?: string) {
+    if (refreshToken) {
+      await this.tokenRepository.revoke(refreshToken);
+    }
+
     const environment = this.configService.get<string>(
       'ENVIRONMENT',
       'development',
@@ -285,7 +317,6 @@ export class AuthService {
     const isSecure = environment === 'production' || environment === 'qa';
     const domain = isSecure ? '.ekoru.cl' : undefined;
 
-    // Clear both cookies
     res.clearCookie('token', {
       httpOnly: true,
       secure: isSecure,

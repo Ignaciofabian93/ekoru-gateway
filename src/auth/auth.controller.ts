@@ -24,7 +24,12 @@ export class AuthController {
     const language = this.i18nService.parseAcceptLanguage(
       req.headers['accept-language'],
     );
-    return this.authService.login(loginDto.email, loginDto.password, res, language);
+    return this.authService.login(
+      loginDto.email,
+      loginDto.password,
+      res,
+      language,
+    );
   }
 
   @Post('refresh')
@@ -71,7 +76,13 @@ export class AuthController {
   }
 
   @Post('logout')
-  logout(@Res({ passthrough: true }) res: Response) {
-    return this.authService.logout(res);
+  logout(
+    @Body('refreshToken') refreshTokenBody: string,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const refreshToken =
+      refreshTokenBody || (req.cookies?.refreshToken as string);
+    return this.authService.logout(res, refreshToken);
   }
 }

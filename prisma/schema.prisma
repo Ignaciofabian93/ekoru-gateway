@@ -407,3 +407,16 @@ model Service {
   @@index([viewCount])
 }
 
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  userType  String   // "seller" | "admin"
+  isRevoked Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRevoked])
+}
+
