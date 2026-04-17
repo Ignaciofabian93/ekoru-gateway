@@ -16,12 +16,12 @@ export class ImagesService {
     if (environment === 'development') {
       const externalUrl = this.configService.get<string>(
         'GATEWAY_EXTERNAL_URL',
-        'http://localhost:4000',
+        'http://localhost:9000',
       );
       return {
         basePath: this.configService.get<string>(
           'DEV_IMAGES_PATH',
-          './public/images',
+          '/public/images',
         ),
         baseUrl: `${externalUrl}/images`,
       };

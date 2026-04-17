@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TokenRepository } from './token.repository';
+import { I18nService } from '../common/i18n';
 import { Response } from 'express';
 import * as bcrypt from 'bcrypt';
 
@@ -14,6 +16,7 @@ describe('AuthService', () => {
   let prismaService: PrismaService;
   let jwtService: JwtService;
   let configService: ConfigService;
+  let tokenRepository: TokenRepository;
 
   const mockSeller = {
     id: 'seller-123',
@@ -75,6 +78,33 @@ describe('AuthService', () => {
             }),
           },
         },
+        {
+          provide: I18nService,
+          useValue: {
+            translate: jest.fn((key: string) => {
+              const messages: Record<string, string> = {
+                'auth.user_not_found': 'No se encontró al usuario',
+                'auth.invalid_credentials': 'Credenciales inválidas',
+                'auth.login_success': 'Inicio de sesión exitoso',
+                'auth.token_refresh_failed':
+                  'No se pudo generar un nuevo token de acceso',
+                'auth.token_invalid': 'Token de acceso inválido',
+                'auth.token_revoked':
+                  'El token de actualización ha sido revocado',
+              };
+              return messages[key] ?? key;
+            }),
+          },
+        },
+        {
+          provide: TokenRepository,
+          useValue: {
+            save: jest.fn().mockResolvedValue(undefined),
+            isRevoked: jest.fn().mockResolvedValue(false),
+            revoke: jest.fn().mockResolvedValue(undefined),
+            revokeAllForUser: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -82,6 +112,7 @@ describe('AuthService', () => {
     prismaService = module.get<PrismaService>(PrismaService);
     jwtService = module.get<JwtService>(JwtService);
     configService = module.get<ConfigService>(ConfigService);
+    tokenRepository = module.get<TokenRepository>(TokenRepository);
   });
 
   it('should be defined', () => {
@@ -106,10 +137,12 @@ describe('AuthService', () => {
         res,
       );
 
-      expect(result).toEqual({
-        token: 'access-token',
-        message: 'Inicio de sesión exitoso',
-      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          token: 'access-token',
+          message: 'Inicio de sesión exitoso',
+        }),
+      );
       expect(prismaService.seller.findUnique).toHaveBeenCalledWith({
         where: { email: 'test@example.com' },
       });
@@ -191,7 +224,7 @@ describe('AuthService', () => {
         expect.objectContaining({
           httpOnly: true,
           secure: true,
-          sameSite: 'lax',
+          sameSite: 'strict',
           domain: '.ekoru.cl',
         }),
       );
@@ -212,7 +245,7 @@ describe('AuthService', () => {
         'token',
         'token',
         expect.objectContaining({
-          httpOnly: false,
+          httpOnly: true,
           secure: false,
           sameSite: 'lax',
           domain: undefined,
@@ -222,19 +255,21 @@ describe('AuthService', () => {
   });
 
   describe('refreshToken', () => {
-    it('should refresh token successfully with valid refresh token', () => {
+    it('should refresh token successfully with valid refresh token', async () => {
       const res = mockResponse();
       jest
         .spyOn(jwtService, 'verify')
         .mockReturnValue({ sellerId: 'seller-123' });
       jest.spyOn(jwtService, 'sign').mockReturnValue('new-access-token');
 
-      const result = service.refreshToken('valid-refresh-token', res);
+      const result = await service.refreshToken('valid-refresh-token', res);
 
-      expect(result).toEqual({
-        token: 'new-access-token',
-        success: true,
-      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          token: 'new-access-token',
+          success: true,
+        }),
+      );
       expect(jwtService.verify).toHaveBeenCalledWith('valid-refresh-token', {
         secret: 'test-refresh-secret',
       });
@@ -250,32 +285,32 @@ describe('AuthService', () => {
       );
     });
 
-    it('should throw UnauthorizedException if refresh token is missing', () => {
+    it('should throw UnauthorizedException if refresh token is missing', async () => {
       const res = mockResponse();
 
-      expect(() => service.refreshToken('', res)).toThrow(
+      await expect(service.refreshToken('', res)).rejects.toThrow(
         UnauthorizedException,
       );
-      expect(() => service.refreshToken('', res)).toThrow(
+      await expect(service.refreshToken('', res)).rejects.toThrow(
         'No se pudo generar un nuevo token de acceso',
       );
     });
 
-    it('should throw UnauthorizedException if refresh token is invalid', () => {
+    it('should throw UnauthorizedException if refresh token is invalid', async () => {
       const res = mockResponse();
       jest.spyOn(jwtService, 'verify').mockImplementation(() => {
         throw new Error('Invalid token');
       });
 
-      expect(() => service.refreshToken('invalid-token', res)).toThrow(
+      await expect(service.refreshToken('invalid-token', res)).rejects.toThrow(
         UnauthorizedException,
       );
-      expect(() => service.refreshToken('invalid-token', res)).toThrow(
+      await expect(service.refreshToken('invalid-token', res)).rejects.toThrow(
         'Token de acceso inválido',
       );
     });
 
-    it('should set secure cookies in QA environment', () => {
+    it('should set secure cookies in QA environment', async () => {
       const res = mockResponse();
       jest
         .spyOn(jwtService, 'verify')
@@ -287,7 +322,7 @@ describe('AuthService', () => {
         return undefined;
       });
 
-      service.refreshToken('valid-token', res);
+      await service.refreshToken('valid-token', res);
 
       const cookieSpy = res.cookie as jest.Mock;
       expect(cookieSpy).toHaveBeenCalledWith(
