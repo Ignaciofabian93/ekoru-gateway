@@ -42,13 +42,9 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
     if (!request.http) return;
 
     const gatewayContext = context as GatewayContext;
-    console.log('gateway context token:: ', gatewayContext?.token);
-
     // Only forward token if it's valid
     if (gatewayContext?.token) {
       const isValid = this.validateToken(gatewayContext.token);
-      console.log('ISVALID:: ', isValid);
-
       if (isValid) {
         request.http.headers.set(
           'Authorization',
@@ -62,8 +58,6 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
     if (sellerId) {
       request.http.headers.set('x-seller-id', sellerId);
     }
-    console.log('SELLER ID:: ', sellerId);
-
     if (gatewayContext?.adminId) {
       request.http.headers.set('x-admin-id', gatewayContext.adminId);
     }
@@ -120,8 +114,8 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
           const envPrefix =
             environment === 'development'
               ? 'DEV'
-              : environment === 'qa'
-                ? 'QA'
+              : environment === 'staging'
+                ? 'STAGING'
                 : 'PROD';
           return configService.get<string>(`EKORU_${service}_${envPrefix}_URL`);
         };
@@ -129,10 +123,10 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
         const subgraphs = [
           { name: 'users', url: getServiceUrl('USERS') },
           { name: 'marketplace', url: getServiceUrl('MARKETPLACE') },
-          // { name: 'stores', url: getServiceUrl('STORES') },
-          // { name: 'services', url: getServiceUrl('SERVICES') },
-          // { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
-          // { name: 'search', url: getServiceUrl('SEARCH') },
+          { name: 'stores', url: getServiceUrl('STORES') },
+          { name: 'services', url: getServiceUrl('SERVICES') },
+          { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
+          { name: 'search', url: getServiceUrl('SEARCH') },
           // { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
           // { name: 'notifications', url: getServiceUrl('NOTIFICATIONS') },
         ].filter((s) => s.url);
@@ -146,9 +140,9 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
             supergraphSdl: new IntrospectAndCompose({
               subgraphs,
             }),
-            buildService({ url }: { name: string; url: string }) {
+            buildService({ url }: { name: string; url?: string }) {
               return new AuthenticatedDataSource(
-                { url },
+                { url: url! },
                 jwtSecret,
                 jwtRefreshSecret,
               );

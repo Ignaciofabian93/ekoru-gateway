@@ -60,20 +60,9 @@ export class ProfileImageController {
       'profile-images',
       fileName,
     );
-    console.log('NAME:: ', fileName);
-    console.log('PATH:: ', imagePath);
 
     // Update database
     await this.updateUserProfileImage(userId, imagePath);
-
-    console.log('RETURN:: ', {
-      message: 'File uploaded and processed successfully',
-      imagePath,
-      imageUrl: this.imagesService.getFullUrl(imagePath),
-      fileName,
-      originalSize: file.size,
-      processedSize: file.buffer.length,
-    });
 
     return {
       message: 'File uploaded and processed successfully',

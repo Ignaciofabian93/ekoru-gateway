@@ -62,8 +62,6 @@ export class AuthService {
     res: Response,
     language: SupportedLanguage = DEFAULT_LANGUAGE,
   ) {
-    console.log('DATA:: ', email, password);
-
     const formattedEmail = email.toLowerCase();
     const user = await this.prisma.seller.findUnique({
       where: { email: formattedEmail },

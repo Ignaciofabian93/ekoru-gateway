@@ -1,17 +1,19 @@
+name: 'ekoru-gateway-staging'
+
 services:
-  ekoru-gateway-qa:
-    image: ekoru-gateway:qa
+  ekoru-gateway-staging:
+    image: ekoru-gateway:staging
     build:
       context: .
       dockerfile: Dockerfile
     restart: always
-    container_name: ekoru-gateway-qa
+    container_name: ekoru-gateway-staging
     env_file:
-      - .env.qa
+      - .env.staging
     ports:
       - '4000:4000'
     networks:
-      - ekoru-network
+      - ekoru-staging-network
     volumes:
       - /home/ekoru/images:/app/images
     deploy:
@@ -38,5 +40,5 @@ services:
       start_period: 40s
 
 networks:
-  ekoru-network:
+  ekoru-staging-network:
     external: true

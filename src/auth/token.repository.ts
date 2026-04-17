@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return */
 // TypeScript-ESLint's project service cannot instantiate Prisma 7's complex delegate
 // generics when accessed through a subclass, producing false-positive "error type"
 // diagnostics. All types are verified correct by `tsc --noEmit`.

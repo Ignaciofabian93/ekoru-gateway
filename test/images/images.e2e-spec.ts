@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -5,6 +6,19 @@ import { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import * as fs from 'fs';
 import * as path from 'path';
+
+interface ImageUploadBody {
+  success: boolean;
+  imagePath: string;
+  imageUrl: string;
+  message?: string;
+}
+
+interface ImageErrorBody {
+  message: string;
+  error?: string;
+  statusCode?: number;
+}
 
 describe('ImagesController (e2e)', () => {
   let app: INestApplication<App>;
@@ -54,21 +68,22 @@ describe('ImagesController (e2e)', () => {
         .attach('image', testImagePath)
         .expect(201)
         .expect((res) => {
-          expect(res.body).toHaveProperty('success', true);
-          expect(res.body).toHaveProperty('imagePath');
-          expect(res.body).toHaveProperty('imageUrl');
-          expect(res.body.imagePath).toContain('/images/departments/');
-          expect(res.body.imagePath).toContain('department-');
+          const body = res.body as ImageUploadBody;
+          expect(body).toHaveProperty('success', true);
+          expect(body).toHaveProperty('imagePath');
+          expect(body).toHaveProperty('imageUrl');
+          expect(body.imagePath).toContain('/images/departments/');
+          expect(body.imagePath).toContain('department-');
 
           // Track uploaded file for cleanup
-          if (res.body.imagePath) {
+          if (body.imagePath) {
             const config = {
               basePath: process.env.DEV_IMAGES_PATH || '/public/images',
             };
             uploadedFiles.push(
               path.join(
                 config.basePath,
-                res.body.imagePath.replace('/images/', ''),
+                body.imagePath.replace('/images/', ''),
               ),
             );
           }
@@ -80,7 +95,7 @@ describe('ImagesController (e2e)', () => {
         .post('/api/images/upload/department')
         .expect(400)
         .expect((res) => {
-          expect(res.body.message).toBe('No file uploaded');
+          expect((res.body as ImageErrorBody).message).toBe('No file uploaded');
         });
     });
 
@@ -120,21 +135,22 @@ describe('ImagesController (e2e)', () => {
         .attach('image', testImagePath)
         .expect(201)
         .expect((res) => {
-          expect(res.body).toHaveProperty('success', true);
-          expect(res.body).toHaveProperty('imagePath');
-          expect(res.body).toHaveProperty('imageUrl');
-          expect(res.body.imagePath).toContain('/images/products/');
-          expect(res.body.imagePath).toContain('product-');
+          const body = res.body as ImageUploadBody;
+          expect(body).toHaveProperty('success', true);
+          expect(body).toHaveProperty('imagePath');
+          expect(body).toHaveProperty('imageUrl');
+          expect(body.imagePath).toContain('/images/products/');
+          expect(body.imagePath).toContain('product-');
 
           // Track uploaded file for cleanup
-          if (res.body.imagePath) {
+          if (body.imagePath) {
             const config = {
               basePath: process.env.DEV_IMAGES_PATH || '/public/images',
             };
             uploadedFiles.push(
               path.join(
                 config.basePath,
-                res.body.imagePath.replace('/images/', ''),
+                body.imagePath.replace('/images/', ''),
               ),
             );
           }
@@ -146,7 +162,10 @@ describe('ImagesController (e2e)', () => {
         .post('/api/images/upload/product')
         .expect(400)
         .expect((res) => {
-          expect(res.body).toHaveProperty('message', 'No file uploaded');
+          expect(res.body as ImageErrorBody).toHaveProperty(
+            'message',
+            'No file uploaded',
+          );
         });
     });
   });
@@ -158,21 +177,22 @@ describe('ImagesController (e2e)', () => {
         .attach('image', testImagePath)
         .expect(201)
         .expect((res) => {
-          expect(res.body).toHaveProperty('success', true);
-          expect(res.body).toHaveProperty('imagePath');
-          expect(res.body).toHaveProperty('imageUrl');
-          expect(res.body.imagePath).toContain('/images/users/');
-          expect(res.body.imagePath).toContain('user-');
+          const body = res.body as ImageUploadBody;
+          expect(body).toHaveProperty('success', true);
+          expect(body).toHaveProperty('imagePath');
+          expect(body).toHaveProperty('imageUrl');
+          expect(body.imagePath).toContain('/images/users/');
+          expect(body.imagePath).toContain('user-');
 
           // Track uploaded file for cleanup
-          if (res.body.imagePath) {
+          if (body.imagePath) {
             const config = {
               basePath: process.env.DEV_IMAGES_PATH || '/public/images',
             };
             uploadedFiles.push(
               path.join(
                 config.basePath,
-                res.body.imagePath.replace('/images/', ''),
+                body.imagePath.replace('/images/', ''),
               ),
             );
           }
@@ -196,7 +216,7 @@ describe('ImagesController (e2e)', () => {
         .post('/api/images/upload/product')
         .attach('image', testImagePath);
 
-      uploadedImagePath = response.body.imagePath;
+      uploadedImagePath = (response.body as ImageUploadBody).imagePath;
       const pathParts = uploadedImagePath.split('/');
       uploadedFilename = pathParts[pathParts.length - 1];
     });
@@ -213,7 +233,7 @@ describe('ImagesController (e2e)', () => {
         .get('/api/images/products/nonexistent-image.jpg')
         .expect(404)
         .expect((res) => {
-          expect(res.body.error).toBe('Image not found');
+          expect((res.body as ImageErrorBody).error).toBe('Image not found');
         });
     });
 
@@ -241,21 +261,17 @@ describe('ImagesController (e2e)', () => {
         .post('/api/images/upload/product')
         .attach('image', testImagePath);
 
-      expect(response1.body.imagePath).not.toBe(response2.body.imagePath);
+      const body1 = response1.body as ImageUploadBody;
+      const body2 = response2.body as ImageUploadBody;
+      expect(body1.imagePath).not.toBe(body2.imagePath);
 
       // Track uploaded files for cleanup
       const config = {
         basePath: process.env.DEV_IMAGES_PATH || '/public/images',
       };
       uploadedFiles.push(
-        path.join(
-          config.basePath,
-          response1.body.imagePath.replace('/images/', ''),
-        ),
-        path.join(
-          config.basePath,
-          response2.body.imagePath.replace('/images/', ''),
-        ),
+        path.join(config.basePath, body1.imagePath.replace('/images/', '')),
+        path.join(config.basePath, body2.imagePath.replace('/images/', '')),
       );
     });
   });
