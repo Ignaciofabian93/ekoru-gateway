@@ -3,7 +3,7 @@
 .env
 .env.local
 .env.*.local
-.env.*
+.env*
 .env.staging
 .env.prod
 .vscode
