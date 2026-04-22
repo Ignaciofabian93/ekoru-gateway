@@ -16,7 +16,6 @@ describe('AuthService', () => {
   let prismaService: PrismaService;
   let jwtService: JwtService;
   let configService: ConfigService;
-  let tokenRepository: TokenRepository;
 
   const mockSeller = {
     id: 'seller-123',
@@ -112,7 +111,6 @@ describe('AuthService', () => {
     prismaService = module.get<PrismaService>(PrismaService);
     jwtService = module.get<JwtService>(JwtService);
     configService = module.get<ConfigService>(ConfigService);
-    tokenRepository = module.get<TokenRepository>(TokenRepository);
   });
 
   it('should be defined', () => {
