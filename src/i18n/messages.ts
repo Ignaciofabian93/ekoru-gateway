@@ -12,8 +12,7 @@ export const translations: Record<string, TranslationMap> = {
     'auth.account_locked': 'La cuenta está bloqueada',
     'auth.login_success': 'Inicio de sesión exitoso',
     'auth.session_closed': 'Sesión cerrada exitosamente',
-    'auth.token_refresh_failed':
-      'No se pudo generar un nuevo token de acceso',
+    'auth.token_refresh_failed': 'No se pudo generar un nuevo token de acceso',
     'auth.token_invalid': 'Token de acceso inválido',
     'auth.token_revoked': 'El token de actualización ha sido revocado',
   },

@@ -16,7 +16,7 @@ export class ImagesService {
     if (environment === 'development') {
       const externalUrl = this.configService.get<string>(
         'GATEWAY_EXTERNAL_URL',
-        'http://localhost:9000',
+        'http://localhost:4000',
       );
       return {
         basePath: this.configService.get<string>(
@@ -25,18 +25,21 @@ export class ImagesService {
         ),
         baseUrl: `${externalUrl}/images`,
       };
-    } else if (environment === 'qa') {
+    } else if (environment === 'staging') {
       return {
         basePath: this.configService.get<string>('IMAGES_PATH', '/app/images'),
         baseUrl: this.configService.get<string>(
           'IMAGES_BASE_URL',
-          'https://qa.gateway.ekoru.cl/images',
+          'https://api.staging.ekoru.cl/images',
         ),
       };
     } else {
       return {
         basePath: this.configService.get<string>('IMAGES_PATH', '/app/images'),
-        baseUrl: 'https://gateway.ekoru.cl/images',
+        baseUrl: this.configService.get<string>(
+          'IMAGES_BASE_URL',
+          'https://api.ekoru.cl/images',
+        ),
       };
     }
   }
