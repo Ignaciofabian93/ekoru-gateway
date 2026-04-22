@@ -54,7 +54,7 @@ describe('ImagesService', () => {
 
       expect(config).toEqual({
         basePath: '/public/images',
-        baseUrl: 'http://localhost:9000/images',
+        baseUrl: 'http://localhost:4000/images',
       });
     });
 
@@ -77,11 +77,13 @@ describe('ImagesService', () => {
       });
     });
 
-    it('should return production config when environment is production', () => {
+    it('should return staging config when environment is staging', () => {
       mockConfigService.get.mockImplementation(
         (key: string, defaultValue?: string) => {
-          if (key === 'ENVIRONMENT') return 'production';
+          if (key === 'ENVIRONMENT') return 'staging';
           if (key === 'IMAGES_PATH') return '/app/images';
+          if (key === 'IMAGES_BASE_URL')
+            return 'https://api.staging.ekoru.cl/images';
           return defaultValue || '';
         },
       );
@@ -90,7 +92,25 @@ describe('ImagesService', () => {
 
       expect(config).toEqual({
         basePath: '/app/images',
-        baseUrl: 'https://gateway.ekoru.cl/images',
+        baseUrl: 'https://api.staging.ekoru.cl/images',
+      });
+    });
+
+    it('should return production config when environment is production', () => {
+      mockConfigService.get.mockImplementation(
+        (key: string, defaultValue?: string) => {
+          if (key === 'ENVIRONMENT') return 'production';
+          if (key === 'IMAGES_PATH') return '/app/images';
+          if (key === 'IMAGES_BASE_URL') return 'https://api.ekoru.cl/images';
+          return defaultValue || '';
+        },
+      );
+
+      const config = service.getImagesConfig();
+
+      expect(config).toEqual({
+        basePath: '/app/images',
+        baseUrl: 'https://api.ekoru.cl/images',
       });
     });
 
@@ -106,7 +126,7 @@ describe('ImagesService', () => {
 
       expect(config).toEqual({
         basePath: '/public/images',
-        baseUrl: 'http://localhost:9000/images',
+        baseUrl: 'http://localhost:4000/images',
       });
     });
   });
@@ -290,7 +310,7 @@ describe('ImagesService', () => {
 
       const url = service.getFullUrl('/images/products/test.jpg');
 
-      expect(url).toBe('http://localhost:9000/images/products/test.jpg');
+      expect(url).toBe('http://localhost:4000/images/products/test.jpg');
     });
 
     it('should generate correct full URL in QA', () => {
@@ -312,13 +332,14 @@ describe('ImagesService', () => {
       mockConfigService.get.mockImplementation(
         (key: string, defaultValue?: string) => {
           if (key === 'ENVIRONMENT') return 'production';
+          if (key === 'IMAGES_BASE_URL') return 'https://api.ekoru.cl/images';
           return defaultValue || '';
         },
       );
 
       const url = service.getFullUrl('/images/departments/dept.jpg');
 
-      expect(url).toBe('https://gateway.ekoru.cl/images/departments/dept.jpg');
+      expect(url).toBe('https://api.ekoru.cl/images/departments/dept.jpg');
     });
 
     it('should handle paths with leading /images correctly', () => {
