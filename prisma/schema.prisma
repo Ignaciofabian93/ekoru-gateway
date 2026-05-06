@@ -224,12 +224,12 @@ model PersonProfile {
   profileImage       String?
   coverImage         String?
   allowExchanges     Boolean           @default(true)
-  personMembershipId Int?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  seller             Seller            @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  personMembershipSubscriptionId Int?
+  createdAt                      DateTime                       @default(now())
+  updatedAt                      DateTime                       @updatedAt
+  seller                         Seller                         @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
-  @@index([personMembershipId])
+  @@index([personMembershipSubscriptionId])
   @@index([sellerId])
 }
 
@@ -255,12 +255,12 @@ model BusinessProfile {
   businessHours            Json?
   createdAt                DateTime            @default(now())
   updatedAt                DateTime            @updatedAt
-  businessMembershipId     Int?
-  seller                   Seller              @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  businessMembershipSubscriptionId Int?
+  seller                           Seller                          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   @@index([taxId])
   @@index([businessType])
-  @@index([businessMembershipId])
+  @@index([businessMembershipSubscriptionId])
   @@index([sellerId])
 }
 
