@@ -5,13 +5,13 @@ import { ProfileImageController } from './profile-image.controller';
 import { CoverImageController } from './cover-image.controller';
 import { ProductImagesController } from './product-images.controller';
 import { BusinessImageController } from './business-image.controller';
-import { ImagesService } from './images.service';
+import { ImageProcessorClient } from './image-processor.client';
 
 @Module({
   imports: [
     MulterModule.register({
       limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB limit
+        fileSize: 10 * 1024 * 1024, // 10MB — matches MAX_UPLOAD_BYTES in image-processor
       },
     }),
   ],
@@ -22,7 +22,7 @@ import { ImagesService } from './images.service';
     ProductImagesController,
     BusinessImageController,
   ],
-  providers: [ImagesService],
-  exports: [ImagesService],
+  providers: [ImageProcessorClient],
+  exports: [ImageProcessorClient],
 })
 export class ImagesModule {}

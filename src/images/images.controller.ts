@@ -1,18 +1,13 @@
 import {
   Controller,
   Post,
-  Get,
-  Param,
-  Res,
+  Body,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
-import { ImagesService } from './images.service';
-import * as fs from 'fs';
-import * as path from 'path';
+import { ImageProcessorClient } from './image-processor.client';
 
 const imageFileFilter = (
   req: any,
@@ -28,34 +23,32 @@ const imageFileFilter = (
 
 @Controller('api/images')
 export class ImagesController {
-  constructor(private readonly imagesService: ImagesService) {}
+  constructor(private readonly imageProcessor: ImageProcessorClient) {}
 
   @Post('upload/department')
   @UseInterceptors(
     FileInterceptor('image', {
       fileFilter: imageFileFilter,
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
-  async uploadDepartmentImage(@UploadedFile() file: Express.Multer.File) {
+  async uploadDepartmentImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('entityId') entityId: string,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+    if (!entityId) {
+      throw new BadRequestException('entityId is required');
+    }
 
-    const filename = this.imagesService.generateUniqueFilename(
-      file.originalname,
-      'department',
-    );
-    const imagePath = await this.imagesService.saveFile(
-      file.buffer,
-      'departments',
-      filename,
-    );
+    const processed = await this.imageProcessor.upload(file, 'asset', entityId);
 
     return {
       success: true,
-      imagePath,
-      imageUrl: this.imagesService.getFullUrl(imagePath),
+      key: processed.key,
+      imageUrl: processed.url,
     };
   }
 
@@ -63,28 +56,30 @@ export class ImagesController {
   @UseInterceptors(
     FileInterceptor('image', {
       fileFilter: imageFileFilter,
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
-  async uploadProductImage(@UploadedFile() file: Express.Multer.File) {
+  async uploadProductImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('entityId') entityId: string,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+    if (!entityId) {
+      throw new BadRequestException('entityId is required');
+    }
 
-    const filename = this.imagesService.generateUniqueFilename(
-      file.originalname,
+    const processed = await this.imageProcessor.upload(
+      file,
       'product',
-    );
-    const imagePath = await this.imagesService.saveFile(
-      file.buffer,
-      'products',
-      filename,
+      entityId,
     );
 
     return {
       success: true,
-      imagePath,
-      imageUrl: this.imagesService.getFullUrl(imagePath),
+      key: processed.key,
+      imageUrl: processed.url,
     };
   }
 
@@ -92,44 +87,30 @@ export class ImagesController {
   @UseInterceptors(
     FileInterceptor('image', {
       fileFilter: imageFileFilter,
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
-  async uploadUserImage(@UploadedFile() file: Express.Multer.File) {
+  async uploadUserImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('entityId') entityId: string,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+    if (!entityId) {
+      throw new BadRequestException('entityId is required');
+    }
 
-    const filename = this.imagesService.generateUniqueFilename(
-      file.originalname,
-      'user',
-    );
-    const imagePath = await this.imagesService.saveFile(
-      file.buffer,
-      'users',
-      filename,
+    const processed = await this.imageProcessor.upload(
+      file,
+      'user_avatar',
+      entityId,
     );
 
     return {
       success: true,
-      imagePath,
-      imageUrl: this.imagesService.getFullUrl(imagePath),
+      key: processed.key,
+      imageUrl: processed.url,
     };
-  }
-
-  @Get(':category/:filename')
-  getImage(
-    @Param('category') category: string,
-    @Param('filename') filename: string,
-    @Res() res: Response,
-  ) {
-    const config = this.imagesService.getImagesConfig();
-    const imagePath = path.join(config.basePath, category, filename);
-
-    if (!fs.existsSync(imagePath)) {
-      return res.status(404).json({ error: 'Image not found' });
-    }
-
-    return res.sendFile(imagePath);
   }
 }

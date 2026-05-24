@@ -14,8 +14,6 @@ services:
       - '4100:4000'
     networks:
       - ekoru-network
-    volumes:
-      - /home/ekoru/images:/app/images
     deploy:
       resources:
         limits:

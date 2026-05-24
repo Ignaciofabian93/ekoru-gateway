@@ -5,10 +5,14 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PrismaService } from '../prisma/prisma.service';
-import { ImagesService } from './images.service';
+import {
+  ImageEntity,
+  ImageProcessorClient,
+} from './image-processor.client';
 
 const imageFileFilter = (
   req: any,
@@ -24,16 +28,18 @@ const imageFileFilter = (
 
 @Controller('api/business-image')
 export class BusinessImageController {
+  private readonly logger = new Logger(BusinessImageController.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly imagesService: ImagesService,
+    private readonly imageProcessor: ImageProcessorClient,
   ) {}
 
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
       fileFilter: imageFileFilter,
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async uploadBusinessImage(
@@ -55,86 +61,61 @@ export class BusinessImageController {
       );
     }
 
-    // Delete existing business image
-    await this.deleteExistingBusinessImage(itemId, itemType);
+    await this.deleteExistingBusinessImages(itemId, itemType);
 
-    // Create unique filename
-    const filename = this.imagesService.generateUniqueFilename(
-      file.originalname,
-      `business-${itemType}-${itemId}`,
-    );
+    const entity: ImageEntity = itemType === 'service' ? 'service' : 'product';
+    const processed = await this.imageProcessor.upload(file, entity, itemId);
 
-    const imagePath = await this.imagesService.saveFile(
-      file.buffer,
-      'business-images',
-      filename,
-    );
-
-    // Update business image in database
-    await this.updateBusinessImage(itemId, itemType, imagePath);
-
-    const config = this.imagesService.getImagesConfig();
-    const imageUrl = `${config.baseUrl}${imagePath}`;
+    await this.updateBusinessImage(itemId, itemType, processed.key);
 
     return {
       message: 'File uploaded and processed successfully',
-      imagePath,
-      imageUrl,
-      fileName: filename,
-      originalSize: file.size,
-      processedSize: file.buffer.length,
+      key: processed.key,
+      imageUrl: processed.url,
+      originalSize: processed.original_size,
+      processedSize: processed.processed_size,
+      width: processed.width,
+      height: processed.height,
     };
   }
 
-  private async deleteExistingBusinessImage(
+  private async deleteExistingBusinessImages(
     itemId: string,
     itemType: string,
   ): Promise<void> {
     try {
-      let existingImages: string[] = [];
+      let existingKeys: string[] = [];
 
       if (itemType === 'storeProduct') {
         const storeProduct = await this.prisma.storeProduct.findUnique({
           where: { id: parseInt(itemId) },
           select: { images: true },
         });
-        existingImages = storeProduct?.images || [];
+        existingKeys = storeProduct?.images || [];
       } else if (itemType === 'service') {
         const service = await this.prisma.service.findUnique({
           where: { id: parseInt(itemId) },
           select: { images: true },
         });
-        existingImages = service?.images || [];
+        existingKeys = service?.images || [];
       }
 
-      if (existingImages.length > 0) {
-        const config = this.imagesService.getImagesConfig();
-        const uploadDir = `${config.basePath}/business-images`;
-
-        for (const imageUrl of existingImages) {
-          const urlParts = imageUrl.split('/');
-          const existingFileName = urlParts[urlParts.length - 1];
-          const existingFilePath = `${uploadDir}/${existingFileName}`;
-
-          try {
-            await this.imagesService.deleteFile(existingFilePath);
-          } catch (error) {
-            console.warn(
-              `Could not delete existing business image ${existingFileName}:`,
-              error,
-            );
-          }
-        }
+      if (existingKeys.length > 0) {
+        await Promise.all(
+          existingKeys.map((key) => this.imageProcessor.delete(key)),
+        );
       }
     } catch (error) {
-      console.error('Error checking/deleting existing business images:', error);
+      this.logger.warn(
+        `Failed to delete existing ${itemType} images for ${itemId}: ${String(error)}`,
+      );
     }
   }
 
   private async updateBusinessImage(
     itemId: string,
     itemType: string,
-    imagePath: string,
+    key: string,
   ): Promise<void> {
     try {
       if (itemType === 'storeProduct') {
@@ -144,14 +125,13 @@ export class BusinessImageController {
         });
 
         if (storeProduct) {
-          const updatedImages = [...(storeProduct.images || []), imagePath];
+          const updatedImages = [...(storeProduct.images || []), key];
 
           await this.prisma.storeProduct.update({
             where: { id: parseInt(itemId) },
             data: { images: updatedImages },
           });
         } else {
-          console.warn(`No StoreProduct found for itemId: ${itemId}`);
           throw new BadRequestException('Store product not found');
         }
       } else if (itemType === 'service') {
@@ -161,21 +141,19 @@ export class BusinessImageController {
         });
 
         if (service) {
-          const updatedImages = [...(service.images || []), imagePath];
+          const updatedImages = [...(service.images || []), key];
 
           await this.prisma.service.update({
             where: { id: parseInt(itemId) },
             data: { images: updatedImages },
           });
         } else {
-          console.warn(`No Service found for itemId: ${itemId}`);
           throw new BadRequestException('Service not found');
         }
-      } else {
-        throw new BadRequestException(`Invalid item type: ${itemType}`);
       }
     } catch (error) {
-      console.error('Database update error:', error);
+      if (error instanceof BadRequestException) throw error;
+      this.logger.error(`Database update error: ${String(error)}`);
       throw new BadRequestException(
         'Failed to update business image in database',
       );

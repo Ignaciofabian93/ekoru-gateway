@@ -5,10 +5,11 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { PrismaService } from '../prisma/prisma.service';
-import { ImagesService } from './images.service';
+import { ImageProcessorClient } from './image-processor.client';
 
 const imageFileFilter = (
   req: any,
@@ -24,16 +25,18 @@ const imageFileFilter = (
 
 @Controller('api/product-images')
 export class ProductImagesController {
+  private readonly logger = new Logger(ProductImagesController.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly imagesService: ImagesService,
+    private readonly imageProcessor: ImageProcessorClient,
   ) {}
 
   @Post()
   @UseInterceptors(
     FilesInterceptor('files', 3, {
       fileFilter: imageFileFilter,
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async uploadProductImages(
@@ -50,38 +53,25 @@ export class ProductImagesController {
 
     const productIdNum = parseInt(productId, 10);
 
-    // Delete existing product images
     await this.deleteExistingProductImages(productIdNum);
 
-    // Save new images
-    const imagePaths: string[] = [];
-    for (const file of files) {
-      const fileName =
-        'product-' +
-        productId +
-        '-' +
-        Date.now() +
-        '-' +
-        Math.round(Math.random() * 1e9) +
-        '.jpg';
-      const imagePath = await this.imagesService.saveFile(
-        file.buffer,
-        'product-images',
-        fileName,
-      );
-      imagePaths.push(imagePath);
-    }
+    const processedImages = await Promise.all(
+      files.map((file) =>
+        this.imageProcessor.upload(file, 'product', productId),
+      ),
+    );
 
-    // Update database
+    const keys = processedImages.map((p) => p.key);
+
     await this.prisma.product.update({
       where: { id: productIdNum },
-      data: { images: imagePaths },
+      data: { images: keys },
     });
 
     return {
       message: 'Files uploaded successfully',
-      imagePaths,
-      imageUrls: imagePaths.map((p) => this.imagesService.getFullUrl(p)),
+      keys,
+      imageUrls: processedImages.map((p) => p.url),
     };
   }
 
@@ -93,12 +83,14 @@ export class ProductImagesController {
       });
 
       if (product?.images && product.images.length > 0) {
-        for (const imagePath of product.images) {
-          await this.imagesService.deleteFile(imagePath);
-        }
+        await Promise.all(
+          product.images.map((key) => this.imageProcessor.delete(key)),
+        );
       }
     } catch (error) {
-      console.error('Error checking/deleting existing product images:', error);
+      this.logger.warn(
+        `Failed to delete existing product images for ${productId}: ${String(error)}`,
+      );
     }
   }
 }

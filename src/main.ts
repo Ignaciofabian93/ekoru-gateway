@@ -54,14 +54,6 @@ async function bootstrap() {
   app.useBodyParser('json', { limit: '20mb' });
   app.useBodyParser('urlencoded', { limit: '20mb', extended: true });
 
-  // Static file serving for images
-  const imagesPath =
-    environment === 'development'
-      ? configService.get<string>('DEV_IMAGES_PATH', '/public/images')
-      : configService.get<string>('IMAGES_PATH', '/app/images');
-
-  app.useStaticAssets(imagesPath, { prefix: '/images' });
-
   await app.listen(port);
 
   console.log(`Gateway running on port: ${port}`);

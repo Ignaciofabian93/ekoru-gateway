@@ -14,8 +14,6 @@ services:
       - '4000:4000'
     networks:
       - ekoru-staging-network
-    volumes:
-      - /home/ekoru/images:/app/images
     deploy:
       resources:
         limits:

@@ -6,11 +6,12 @@ import {
   BadRequestException,
   UseGuards,
   Req,
+  Logger,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
-import { ImagesService } from './images.service';
+import { ImageProcessorClient } from './image-processor.client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 const imageFileFilter = (
@@ -31,9 +32,11 @@ const imageFileFilter = (
 
 @Controller('api/cover-image')
 export class CoverImageController {
+  private readonly logger = new Logger(CoverImageController.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly imagesService: ImagesService,
+    private readonly imageProcessor: ImageProcessorClient,
   ) {}
 
   @Post()
@@ -41,7 +44,7 @@ export class CoverImageController {
   @UseInterceptors(
     FileInterceptor('file', {
       fileFilter: imageFileFilter,
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async uploadCoverImage(
@@ -54,27 +57,24 @@ export class CoverImageController {
 
     const userId = req.user.sellerId;
 
-    // Delete existing cover image
     await this.deleteExistingCoverImage(userId);
 
-    // Create unique filename
-    const fileName = 'cover-' + userId + '-' + Date.now() + '.jpg';
-    const imagePath = await this.imagesService.saveFile(
-      file.buffer,
-      'cover-images',
-      fileName,
+    const processed = await this.imageProcessor.upload(
+      file,
+      'user_cover',
+      userId,
     );
 
-    // Update database
-    await this.updateUserCoverImage(userId, imagePath);
+    await this.updateUserCoverImage(userId, processed.key);
 
     return {
       message: 'File uploaded and processed successfully',
-      imagePath,
-      imageUrl: this.imagesService.getFullUrl(imagePath),
-      fileName,
-      originalSize: file.size,
-      processedSize: file.buffer.length,
+      key: processed.key,
+      imageUrl: processed.url,
+      originalSize: processed.original_size,
+      processedSize: processed.processed_size,
+      width: processed.width,
+      height: processed.height,
     };
   }
 
@@ -85,18 +85,14 @@ export class CoverImageController {
         select: { sellerType: true },
       });
 
+      let existingKey: string | null = null;
+
       if (user?.sellerType === 'PERSON') {
         const personProfile = await this.prisma.personProfile.findFirst({
           where: { sellerId: userId },
           select: { coverImage: true },
         });
-
-        if (personProfile?.coverImage) {
-          const urlParts = personProfile.coverImage.split('/');
-          const existingFileName = urlParts[urlParts.length - 1];
-          const existingFilePath = `cover-images/${existingFileName}`;
-          await this.imagesService.deleteFile(existingFilePath);
-        }
+        existingKey = personProfile?.coverImage ?? null;
       } else if (
         user?.sellerType === 'STARTUP' ||
         user?.sellerType === 'COMPANY'
@@ -105,21 +101,22 @@ export class CoverImageController {
           where: { sellerId: userId },
           select: { coverImage: true },
         });
-        if (businessProfile?.coverImage) {
-          const urlParts = businessProfile.coverImage.split('/');
-          const existingFileName = urlParts[urlParts.length - 1];
-          const existingFilePath = `cover-images/${existingFileName}`;
-          await this.imagesService.deleteFile(existingFilePath);
-        }
+        existingKey = businessProfile?.coverImage ?? null;
+      }
+
+      if (existingKey) {
+        await this.imageProcessor.delete(existingKey);
       }
     } catch (error) {
-      console.error('Error checking/deleting existing cover image:', error);
+      this.logger.warn(
+        `Failed to delete existing cover image for ${userId}: ${String(error)}`,
+      );
     }
   }
 
   private async updateUserCoverImage(
     userId: string,
-    imagePath: string,
+    key: string,
   ): Promise<void> {
     const user = await this.prisma.seller.findUnique({
       where: { id: userId },
@@ -129,7 +126,7 @@ export class CoverImageController {
     if (user?.sellerType === 'PERSON') {
       await this.prisma.personProfile.update({
         where: { sellerId: userId },
-        data: { coverImage: imagePath },
+        data: { coverImage: key },
       });
     } else if (
       user?.sellerType === 'STARTUP' ||
@@ -137,7 +134,7 @@ export class CoverImageController {
     ) {
       await this.prisma.businessProfile.update({
         where: { sellerId: userId },
-        data: { coverImage: imagePath },
+        data: { coverImage: key },
       });
     }
   }
