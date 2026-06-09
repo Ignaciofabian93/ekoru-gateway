@@ -37,7 +37,7 @@ async function bootstrap() {
     environment === 'development'
       ? true
       : environment === 'staging'
-        ? ['https://staging.app.ekoru.cl', 'http://localhost:3000', '*']
+        ? ['https://staging-app.ekoru.cl', 'http://localhost:3000', '*']
         : 'https://app.ekoru.cl';
 
   app.enableCors({

@@ -12,6 +12,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { ImagesModule } from './images/images.module';
+import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
 import { PrometheusModule } from '@willsoto/nestjs-prometheus';
@@ -22,6 +23,7 @@ interface GatewayContext {
   adminId?: string;
   extensions?: {
     sellerId?: string;
+    adminId?: string;
   };
 }
 
@@ -58,8 +60,22 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
     if (sellerId) {
       request.http.headers.set('x-seller-id', sellerId);
     }
-    if (gatewayContext?.adminId) {
-      request.http.headers.set('x-admin-id', gatewayContext.adminId);
+
+    const adminId =
+      gatewayContext?.adminId || gatewayContext?.extensions?.adminId;
+    if (adminId) {
+      request.http.headers.set('x-admin-id', adminId);
+    }
+
+    // Forward the shared internal secret to the transactions subgraph so its
+    // `processProviderReturn` / `processProviderWebhook` mutations can verify
+    // that the call came from the gateway (not a public client). The
+    // PaymentsService also sends this directly when calling the subgraph from
+    // the REST controller; this header path covers any federated GraphQL
+    // request that might also hit internal mutations later.
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+    if (internalSecret) {
+      request.http.headers.set('x-internal-secret', internalSecret);
     }
   }
 
@@ -207,6 +223,7 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
     }),
     AuthModule,
     ImagesModule,
+    PaymentsModule,
     PrismaModule,
   ],
   controllers: [HealthController],

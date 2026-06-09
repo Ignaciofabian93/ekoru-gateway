@@ -4,8 +4,8 @@ import { AuthService } from './auth.service';
 import { I18nService } from '../common/i18n';
 
 class LoginDto {
-  email: string;
-  password: string;
+  email!: string;
+  password!: string;
 }
 
 @Controller('session')
