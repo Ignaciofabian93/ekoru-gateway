@@ -31,6 +31,14 @@ enum SellerType {
   COMPANY
 }
 
+enum Language {
+  ES
+  EN
+  FR
+  PT
+  DE
+}
+
 enum AdminType {
   PLATFORM
   BUSINESS
@@ -146,31 +154,32 @@ enum ServicePricing {
 // ─── Models ──────────────────────────────────────────────────────────────────────
 
 model Seller {
-  id                                               String                      @id @default(uuid())
-  email                                            String                      @unique
-  password                                         String
-  sellerType                                       SellerType
-  isActive                                         Boolean                     @default(true)
-  isVerified                                       Boolean                     @default(false)
-  createdAt                                        DateTime                    @default(now())
-  updatedAt                                        DateTime                    @updatedAt
-  address                                          String?
-  cityId                                           Int?
-  countryId                                        Int?
-  countyId                                         Int?
-  regionId                                         Int?
-  phone                                            String?
-  website                                          String?
-  preferredContactMethod                           ContactMethod?              @default(WHATSAPP)
-  socialMediaLinks                                 Json?
-  points                                           Int                         @default(0)
-  sellerLevelId                                    Int?
-  admin                                            Admin[]
-  businessProfile                                  BusinessProfile?
-  personProfile                                    PersonProfile?
-  product                                          Product[]
-  service                                          Service[]
-  storeProduct                                     StoreProduct[]
+  id                                     String                           @id @default(uuid())
+  email                                  String                           @unique
+  password                               String
+  sellerType                             SellerType
+  isActive                               Boolean                          @default(true)
+  isVerified                             Boolean                          @default(false)
+  createdAt                              DateTime                         @default(now())
+  updatedAt                              DateTime                         @updatedAt
+  address                                String?
+  cityId                                 Int?
+  countryId                              Int?
+  countyId                               Int?
+  regionId                               Int?
+  contentLanguage                        Language?
+  phone                                  String?
+  website                                String?
+  preferredContactMethod                 ContactMethod?                   @default(WHATSAPP)
+  socialMediaLinks                       Json?
+  points                                 Int                              @default(0)
+  sellerLevelId                          Int?
+  admin                                  Admin[]
+  businessProfile                        BusinessProfile?
+  personProfile                          PersonProfile?
+  product                                Product[]
+  service                                Service[]
+  storeProduct                           StoreProduct[]
 
   @@index([cityId])
   @@index([email])
@@ -184,28 +193,28 @@ model Seller {
 }
 
 model Admin {
-  id               String             @id @default(uuid())
-  email            String             @unique
-  password         String
-  name             String
-  lastName         String?
-  adminType        AdminType          @default(PLATFORM)
-  role             AdminRole          @default(MODERATOR)
-  permissions      AdminPermission[]
-  sellerId         String?
-  isActive         Boolean            @default(true)
-  isEmailVerified  Boolean            @default(false)
-  accountLocked    Boolean            @default(false)
-  loginAttempts    Int                @default(0)
-  lastLoginAt      DateTime?
-  lastLoginIp      String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  cityId           Int?
-  countryId        Int?
-  countyId         Int?
-  regionId         Int?
-  seller           Seller?            @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  id                  String             @id @default(uuid())
+  email               String             @unique
+  password            String
+  name                String
+  lastName            String?
+  adminType           AdminType          @default(PLATFORM)
+  role                AdminRole          @default(MODERATOR)
+  permissions         AdminPermission[]
+  sellerId            String?
+  isActive            Boolean            @default(true)
+  isEmailVerified     Boolean            @default(false)
+  accountLocked       Boolean            @default(false)
+  loginAttempts       Int                @default(0)
+  lastLoginAt         DateTime?
+  lastLoginIp         String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  cityId              Int?
+  countryId           Int?
+  countyId            Int?
+  regionId            Int?
+  seller              Seller?            @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   @@index([email])
   @@index([sellerId])
@@ -214,47 +223,47 @@ model Admin {
 }
 
 model PersonProfile {
-  id                 String            @id @default(uuid())
-  sellerId           String            @unique
-  firstName          String
-  lastName           String?
-  displayName        String?
-  bio                String?
-  birthday           DateTime?
-  profileImage       String?
-  coverImage         String?
-  allowExchanges     Boolean           @default(true)
+  id                             String                        @id @default(uuid())
+  sellerId                       String                        @unique
+  firstName                      String
+  lastName                       String?
+  displayName                    String?
+  bio                            String?
+  birthday                       DateTime?
+  profileImage                   String?
+  coverImage                     String?
+  allowExchanges                 Boolean                       @default(true)
   personMembershipSubscriptionId Int?
-  createdAt                      DateTime                       @default(now())
-  updatedAt                      DateTime                       @updatedAt
-  seller                         Seller                         @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  createdAt                      DateTime                      @default(now())
+  updatedAt                      DateTime                      @updatedAt
+  seller                         Seller                        @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   @@index([personMembershipSubscriptionId])
   @@index([sellerId])
 }
 
 model BusinessProfile {
-  id                       String              @id @default(uuid())
-  sellerId                 String              @unique
-  businessName             String
-  description              String?
-  logo                     String?
-  coverImage               String?
-  businessType             BusinessType
-  legalBusinessName        String?
-  taxId                    String?             @unique
-  businessStartDate        DateTime?
-  legalRepresentative      String?
-  legalRepresentativeTaxId String?
-  shippingPolicy           String?
-  returnPolicy             String?
-  serviceArea              String?
-  yearsOfExperience        Int?
-  certifications           String[]
-  travelRadius             Int?
-  businessHours            Json?
-  createdAt                DateTime            @default(now())
-  updatedAt                DateTime            @updatedAt
+  id                               String                          @id @default(uuid())
+  sellerId                         String                          @unique
+  businessName                     String
+  description                      String?
+  logo                             String?
+  coverImage                       String?
+  businessType                     BusinessType
+  legalBusinessName                String?
+  taxId                            String?                         @unique
+  businessStartDate                DateTime?
+  legalRepresentative              String?
+  legalRepresentativeTaxId         String?
+  shippingPolicy                   String?
+  returnPolicy                     String?
+  serviceArea                      String?
+  yearsOfExperience                Int?
+  certifications                   String[]
+  travelRadius                     Int?
+  businessHours                    Json?
+  createdAt                        DateTime                        @default(now())
+  updatedAt                        DateTime                        @updatedAt
   businessMembershipSubscriptionId Int?
   seller                           Seller                          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
@@ -265,7 +274,7 @@ model BusinessProfile {
 }
 
 model Product {
-  id                   Int              @id @default(autoincrement())
+  id                   Int                      @id @default(autoincrement())
   name                 String
   description          String
   color                String?
@@ -275,18 +284,18 @@ model Product {
   productCategoryId    Int
   badges               Badge[]
   interests            String[]
-  condition            ProductCondition @default(NEW)
+  condition            ProductCondition         @default(NEW)
   conditionDescription String?
-  isActive             Boolean          @default(true)
-  isExchangeable       Boolean          @default(false)
+  isActive             Boolean                  @default(true)
+  isExchangeable       Boolean                  @default(false)
   sellerId             String
-  viewCount            Int              @default(0)
-  createdAt            DateTime         @default(now())
-  updatedAt            DateTime         @updatedAt
+  viewCount            Int                      @default(0)
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
   deletedAt            DateTime?
   featuredFrom         DateTime?
   featuredUntil        DateTime?
-  seller               Seller           @relation(fields: [sellerId], references: [id])
+  seller               Seller                   @relation(fields: [sellerId], references: [id])
 
   @@index([createdAt(sort: Desc)])
   @@index([price])
@@ -349,10 +358,10 @@ model StoreProduct {
 
   subCategoryId Int
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-  featuredFrom DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+  featuredFrom  DateTime?
   featuredUntil DateTime?
 
   seller             Seller               @relation(fields: [sellerId], references: [id])
@@ -411,7 +420,7 @@ model RefreshToken {
   id        String   @id @default(uuid())
   token     String   @unique
   userId    String
-  userType  String   // "seller" | "admin"
+  userType  String // "seller" | "admin"
   isRevoked Boolean  @default(false)
   expiresAt DateTime
   createdAt DateTime @default(now())
