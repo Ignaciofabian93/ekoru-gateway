@@ -35,13 +35,25 @@ export class PaymentsService {
   ): Promise<ProcessReturnResult> {
     const data = await this._callTransactions(
       `mutation ProcessReturn($provider: ChileanPaymentProvider!, $payload: JSON!, $secret: String!) {
-        processProviderReturn(provider: $provider, payload: $payload, internalSecret: $secret)
+        processProviderReturn(provider: $provider, payload: $payload, internalSecret: $secret) {
+          paymentId
+          status
+        }
       }`,
       { provider, payload, secret: this._internalSecret() },
     );
+    // The subgraph returns the canonical Payment id (it looked the payment up
+    // to commit it). Trust that over re-deriving it from the provider payload —
+    // a normal Webpay success carries only `token_ws`, no buy order.
+    const result = data['processProviderReturn'] as {
+      paymentId?: string;
+      status?: string;
+    } | null;
     return {
-      paymentId: this._extractPaymentIdFromPayload(provider, payload) ?? 0,
-      status: data['processProviderReturn'] as string,
+      paymentId: result?.paymentId
+        ? Number(result.paymentId)
+        : (this._extractPaymentIdFromPayload(provider, payload) ?? 0),
+      status: result?.status ?? 'PROCESSING',
     };
   }
 

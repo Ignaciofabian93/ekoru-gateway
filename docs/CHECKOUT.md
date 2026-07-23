@@ -1,5 +1,8 @@
 # Checkout / Payments routes (2026-05-26)
 
+> **Runtime reference** for this layer (routes, payloads, internal call shape):
+> [`PAYMENT_FLOW.md`](./PAYMENT_FLOW.md).
+
 The gateway is now the public HTTP edge for provider returns and webhooks.
 See the cross-repo reference at
 [`ekoru-web-app/docs/CHECKOUT.md`](../../ekoru-web-app/docs/CHECKOUT.md) §3

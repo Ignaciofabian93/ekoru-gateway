@@ -290,6 +290,7 @@ model Product {
   isExchangeable       Boolean                  @default(false)
   sellerId             String
   viewCount            Int                      @default(0)
+  likesCount           Int                      @default(0)
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
   deletedAt            DateTime?
@@ -352,7 +353,7 @@ model StoreProduct {
   metaDescription String?
 
   // Additional Info
-  warranty         String?
+  warranty         Boolean?
   warrantyDuration Int?
   features         String[]
 
@@ -364,7 +365,7 @@ model StoreProduct {
   featuredFrom  DateTime?
   featuredUntil DateTime?
 
-  seller             Seller               @relation(fields: [sellerId], references: [id])
+  seller               Seller                            @relation(fields: [sellerId], references: [id])
 
   @@index([sellerId])
   @@index([subCategoryId])
@@ -386,23 +387,30 @@ model StoreProduct {
 }
 
 model Service {
-  id                 Int                  @id @default(autoincrement())
-  name               String
-  description        String?
-  sellerId           String
-  pricingType        ServicePricing       @default(QUOTATION)
-  basePrice          Float?
-  priceRange         String?
-  duration           Int?
-  isActive           Boolean              @default(true)
-  images             String[]
-  tags               String[]
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  subcategoryId      Int
-  averageRating      Float?               @default(0)
-  viewCount          Int                  @default(0)
-  seller             Seller               @relation(fields: [sellerId], references: [id])
+  id                    Int                  @id @default(autoincrement())
+  name                  String
+  description           String?
+  sellerId              String
+  pricingType           ServicePricing       @default(QUOTATION)
+  basePrice             Float?
+  priceRange            String?
+  duration              Int?
+  isActive              Boolean              @default(true)
+  images                String[]
+  tags                  String[]
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  subcategoryId         Int
+  averageRating         Float?               @default(0)
+  viewCount             Int                  @default(0)
+  availabilitySchedule  Json?
+  isCurrentlyAvailable  Boolean?             @default(true)
+  maxConcurrentBookings Int?
+  advanceBookingDays    Int?
+  serviceRadius         Int?
+  serviceLocations      Json?
+  isRemoteService       Boolean?             @default(false)
+  seller                Seller               @relation(fields: [sellerId], references: [id])
 
   @@index([subcategoryId])
   @@index([isActive])

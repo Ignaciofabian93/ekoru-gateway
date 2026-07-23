@@ -143,7 +143,7 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
           { name: 'services', url: getServiceUrl('SERVICES') },
           { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
           { name: 'search', url: getServiceUrl('SEARCH') },
-          // { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
+          { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
           // { name: 'notifications', url: getServiceUrl('NOTIFICATIONS') },
         ].filter((s) => s.url);
 
