@@ -296,6 +296,14 @@ model Product {
   deletedAt            DateTime?
   featuredFrom         DateTime?
   featuredUntil        DateTime?
+  /// Set while an accepted P2P deal holds this item; listings/search hide it
+  /// until this passes. Cleared when the deal expires/cancels. See P2PDeal.
+  reservedUntil        DateTime?
+  /// Set when a P2P deal completes — the item left the marketplace (sold or
+  /// exchanged) but stays in the seller's profile until soft-deleted a week later.
+  soldAt               DateTime?
+  /// How it left: "SALE" | "EXCHANGE" — for the profile label. Null when unsold.
+  soldVia              String?
   seller               Seller                   @relation(fields: [sellerId], references: [id])
 
   @@index([createdAt(sort: Desc)])
@@ -307,6 +315,8 @@ model Product {
   @@index([viewCount(sort: Desc)])
   @@index([productCategoryId, isActive, createdAt(sort: Desc)])
   @@index([featuredUntil])
+  @@index([reservedUntil])
+  @@index([soldAt])
 }
 
 model StoreProduct {
