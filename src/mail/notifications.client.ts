@@ -42,7 +42,7 @@ export class NotificationsClient {
     return this.emit({
       sellerId,
       type: 'SECURITY_LOGIN_ALERT',
-      actionUrl: '/account/security',
+      actionUrl: '/profile/settings',
       data: {
         userAgent: details.userAgent ?? null,
         ipAddress: details.ipAddress ?? null,
