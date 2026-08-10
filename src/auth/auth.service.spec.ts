@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TokenRepository } from './token.repository';
 import { I18nService } from '../common/i18n';
+import { NotificationsClient } from '../mail/notifications.client';
 import { Response } from 'express';
 import * as bcrypt from 'bcrypt';
 
@@ -16,6 +17,7 @@ describe('AuthService', () => {
   let prismaService: PrismaService;
   let jwtService: JwtService;
   let configService: ConfigService;
+  let notificationsClient: { sendLoginAlert: jest.Mock };
 
   const mockSeller = {
     id: 'seller-123',
@@ -31,6 +33,7 @@ describe('AuthService', () => {
     countryId: null,
     countyId: null,
     regionId: null,
+    contentLanguage: null,
     phone: '123456789',
     website: null,
     preferredContactMethod: null,
@@ -47,6 +50,10 @@ describe('AuthService', () => {
   };
 
   beforeEach(async () => {
+    notificationsClient = {
+      sendLoginAlert: jest.fn().mockResolvedValue(true),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -103,6 +110,10 @@ describe('AuthService', () => {
             revoke: jest.fn().mockResolvedValue(undefined),
             revokeAllForUser: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        {
+          provide: NotificationsClient,
+          useValue: notificationsClient,
         },
       ],
     }).compile();
@@ -171,6 +182,60 @@ describe('AuthService', () => {
       expect(prismaService.seller.findUnique).toHaveBeenCalledWith({
         where: { email: 'test@example.com' },
       });
+    });
+
+    it('should request a login alert with the device details', async () => {
+      const res = mockResponse();
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest.spyOn(jwtService, 'sign').mockReturnValue('token');
+
+      await service.login('test@example.com', 'password123', res, 'es', {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/138.0.0.0',
+        ipAddress: '190.1.2.3',
+      });
+
+      expect(notificationsClient.sendLoginAlert).toHaveBeenCalledWith(
+        'seller-123',
+        expect.objectContaining({
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/138.0.0.0',
+          ipAddress: '190.1.2.3',
+          occurredAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('should still resolve the login when the alert cannot be sent', async () => {
+      const res = mockResponse();
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest.spyOn(jwtService, 'sign').mockReturnValue('token');
+      notificationsClient.sendLoginAlert.mockRejectedValue(
+        new Error('users unreachable'),
+      );
+
+      await expect(
+        service.login('test@example.com', 'password123', res),
+      ).resolves.toEqual(
+        expect.objectContaining({ message: 'Inicio de sesión exitoso' }),
+      );
+    });
+
+    it('should not send a login alert when credentials are rejected', async () => {
+      const res = mockResponse();
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.login('test@example.com', 'wrongpassword', res),
+      ).rejects.toThrow(BadRequestException);
+      expect(notificationsClient.sendLoginAlert).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if user not found', async () => {

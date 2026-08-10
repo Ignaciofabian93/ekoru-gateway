@@ -11,6 +11,10 @@ import { Response } from 'express';
 import { I18nService } from '../common/i18n';
 import { DEFAULT_LANGUAGE, type SupportedLanguage } from '../i18n/messages';
 import { TokenRepository } from './token.repository';
+import {
+  NotificationsClient,
+  type LoginAlertDetails,
+} from '../mail/notifications.client';
 
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -22,6 +26,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly i18nService: I18nService,
     private readonly tokenRepository: TokenRepository,
+    private readonly notifications: NotificationsClient,
   ) {}
 
   private setCookies(res: Response, token: string, refreshToken: string) {
@@ -61,6 +66,7 @@ export class AuthService {
     password: string,
     res: Response,
     language: SupportedLanguage = DEFAULT_LANGUAGE,
+    device: LoginAlertDetails = {},
   ) {
     const formattedEmail = email.toLowerCase();
     const user = await this.prisma.seller.findUnique({
@@ -95,6 +101,14 @@ export class AuthService {
     );
 
     this.setCookies(res, token, refreshToken);
+
+    // Security notice, not part of the sign-in contract: users decides whether
+    // to actually send it (SellerPreferences.enableLoginAlerts). Not awaited so
+    // a slow SMTP hop can't stall the login, and the rejection is caught here
+    // rather than surfacing as an unhandled rejection.
+    this.notifications
+      .sendLoginAlert(user.id, { ...device, occurredAt: new Date() })
+      .catch(() => undefined);
 
     return {
       token,

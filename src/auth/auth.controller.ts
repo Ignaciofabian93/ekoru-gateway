@@ -8,6 +8,19 @@ class LoginDto {
   password!: string;
 }
 
+/**
+ * Caller IP for the login-alert email. Behind the reverse proxy the socket
+ * address is the proxy's, so the left-most `X-Forwarded-For` entry — the
+ * original client — wins when present. Purely informational: it is shown to
+ * the account owner, never used for an access decision.
+ */
+function clientIp(req: Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const first = raw?.split(',')[0]?.trim();
+  return first || req.ip || req.socket?.remoteAddress || undefined;
+}
+
 @Controller('session')
 export class AuthController {
   constructor(
@@ -29,6 +42,10 @@ export class AuthController {
       loginDto.password,
       res,
       language,
+      {
+        userAgent: req.headers['user-agent'],
+        ipAddress: clientIp(req),
+      },
     );
   }
 

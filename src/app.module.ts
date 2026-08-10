@@ -144,7 +144,6 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
           { name: 'blog-community', url: getServiceUrl('BLOG_COMMUNITY') },
           { name: 'search', url: getServiceUrl('SEARCH') },
           { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
-          // { name: 'notifications', url: getServiceUrl('NOTIFICATIONS') },
         ].filter((s) => s.url);
 
         const jwtSecret = configService.get<string>('JWT_SECRET') || '';
