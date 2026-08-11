@@ -77,8 +77,7 @@ export class NotificationsClient {
       return data['emitNotification'] != null;
     } catch (error) {
       this.logger.error(
-        `emitNotification(${input.type}) failed for seller ${input.sellerId}`,
-        error,
+        `emitNotification(${input.type}) for seller ${input.sellerId} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       return false;
     }
