@@ -103,7 +103,19 @@ GATEWAY_GRAPHQL_URL=https://api.ekoru.cl/graphql npm run smoke
   A whole subgraph missing shows up as every one of its fields missing.
 - **Liveness** — runs one real query per subgraph, selecting only `__typename`,
   so it proves the router can reach and execute against each service without
-  depending on any data existing.
+  depending on any data existing. An authorization refusal counts as reachable:
+  the subgraph received the query and decided, which is what is being asked.
+
+Running it from inside the container is a useful variant — it proves the router
+answers on its own network rather than only through the reverse proxy. The
+script has no imports, so it can be piped in, and it reads `GATEWAY_GRAPHQL_URL`
+when the app's `PORT` is not the default:
+
+```bash
+docker exec -i ekoru-gateway-staging node - < scripts/smoke-supergraph.mjs
+docker exec -i -e GATEWAY_GRAPHQL_URL=http://localhost:4100/graphql \
+  ekoru-gateway node - < scripts/smoke-supergraph.mjs      # prod listens on 4100
+```
 
 It exits non-zero on the first failing check, so it can gate a deploy step.
 

@@ -43,7 +43,7 @@ const SUBGRAPHS = [
       ],
       Mutation: ['requestPasswordReset', 'resetPassword', 'updatePassword'],
     },
-    probe: '{ countries(language: ES) { __typename } }',
+    probe: '{ sellerLabels(language: ES) { __typename } }',
   },
   {
     name: 'marketplace',
@@ -133,6 +133,22 @@ function bullet(ok) {
   return ok ? '  ok  ' : ' FAIL ';
 }
 
+/**
+ * An authorization refusal means the subgraph received the query, executed it
+ * and decided — which is exactly what liveness is asking. Only a schema error
+ * ("Cannot query field") or a transport failure means the router could not
+ * reach it.
+ */
+function isAuthRefusal(error) {
+  const code = error?.extensions?.code ?? '';
+  if (['UNAUTHENTICATED', 'FORBIDDEN', 'UNAUTHORIZED'].includes(code)) {
+    return true;
+  }
+  return /no autorizado|unauthoriz|unauthenticat|forbidden|inicia(r)? sesi/i.test(
+    error?.message ?? '',
+  );
+}
+
 async function main() {
   console.log(`Supergraph smoke test → ${url}\n`);
 
@@ -183,8 +199,15 @@ async function main() {
     let detail = '';
     try {
       const result = await gql(subgraph.probe);
-      ok = !result.errors?.length;
-      detail = result.errors?.[0]?.message ?? '';
+      const error = result.errors?.[0];
+      if (!error) {
+        ok = true;
+      } else if (isAuthRefusal(error)) {
+        ok = true;
+        detail = `reachable (probe needs auth: ${error.message})`;
+      } else {
+        detail = error.message;
+      }
     } catch (error) {
       detail = error.message;
     }
