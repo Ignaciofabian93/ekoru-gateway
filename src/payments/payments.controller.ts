@@ -5,6 +5,7 @@ import {
   Req,
   Res,
   Param,
+  Query,
   Body,
   Headers,
   Logger,
@@ -13,6 +14,16 @@ import type { Request, Response } from 'express';
 import { PaymentsService } from './payments.service';
 
 type ProviderId = 'WEBPAY' | 'KHIPU' | 'MERCADOPAGO';
+
+/** Both interpolated values reach an HTML attribute, so quotes must not escape it. */
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 /**
  * Bridges provider-side HTTP (return URLs + webhooks) to the transactions
@@ -109,6 +120,55 @@ export class PaymentsController {
     if (!body || Object.keys(body).length === 0) return { ok: false };
     await this.payments.processWebhook('MERCADOPAGO', eventType, body);
     return { ok: true };
+  }
+
+  // ─── Webpay hand-off page ─────────────────────────────────────────────────
+
+  /**
+   * Webpay only accepts the buyer via an HTTP form-POST carrying `token_ws`.
+   * The web app builds that form in the DOM (`lib/webpay.ts`), but a native
+   * client has no DOM: it can only open a URL. This endpoint is that URL — it
+   * returns a page that immediately POSTs the token on for the buyer.
+   *
+   * `url` is restricted to Transbank hosts. Without that check this would be an
+   * open relay that POSTs an attacker-chosen token to an attacker-chosen site
+   * from inside our own origin.
+   */
+  @Get('webpay/redirect')
+  webpayRedirect(
+    @Query('url') url: string,
+    @Query('token') token: string,
+    @Res() res: Response,
+  ) {
+    if (!url || !token || !this._isTransbankUrl(url)) {
+      this.logger.warn(`Rejected Webpay redirect for host: ${url}`);
+      return res.status(400).send('Invalid Webpay redirect');
+    }
+
+    return res.status(200).type('html').send(`<!DOCTYPE html>
+<html lang="es">
+  <head><meta charset="utf-8" /><title>Redirigiendo a Webpay…</title></head>
+  <body onload="document.forms[0].submit()">
+    <p>Redirigiendo a Webpay…</p>
+    <form method="POST" action="${escapeHtmlAttr(url)}">
+      <input type="hidden" name="token_ws" value="${escapeHtmlAttr(token)}" />
+      <noscript><button type="submit">Continuar</button></noscript>
+    </form>
+  </body>
+</html>`);
+  }
+
+  private _isTransbankUrl(raw: string): boolean {
+    try {
+      const parsed = new URL(raw);
+      return (
+        parsed.protocol === 'https:' &&
+        (parsed.hostname === 'transbank.cl' ||
+          parsed.hostname.endsWith('.transbank.cl'))
+      );
+    } catch {
+      return false;
+    }
   }
 
   // ─── helpers ──────────────────────────────────────────────────────────────
