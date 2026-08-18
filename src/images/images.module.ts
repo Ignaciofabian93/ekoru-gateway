@@ -6,6 +6,7 @@ import { CoverImageController } from './cover-image.controller';
 import { ProductImagesController } from './product-images.controller';
 import { BusinessImageController } from './business-image.controller';
 import { ImageProcessorClient } from './image-processor.client';
+import { JwtAdminGuard } from '../auth/guards/jwt-admin.guard';
 
 @Module({
   imports: [
@@ -22,7 +23,7 @@ import { ImageProcessorClient } from './image-processor.client';
     ProductImagesController,
     BusinessImageController,
   ],
-  providers: [ImageProcessorClient],
+  providers: [ImageProcessorClient, JwtAdminGuard],
   exports: [ImageProcessorClient],
 })
 export class ImagesModule {}

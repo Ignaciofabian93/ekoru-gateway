@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 
 type ProviderId = 'WEBPAY' | 'KHIPU' | 'MERCADOPAGO';
 
@@ -33,14 +32,17 @@ export class PaymentsService {
     provider: ProviderId,
     payload: Record<string, unknown>,
   ): Promise<ProcessReturnResult> {
+    // The secret travels as the `x-internal-secret` header (see
+    // `_callTransactions`), never as a GraphQL argument — the argument form
+    // used to be part of the public schema.
     const data = await this._callTransactions(
-      `mutation ProcessReturn($provider: ChileanPaymentProvider!, $payload: JSON!, $secret: String!) {
-        processProviderReturn(provider: $provider, payload: $payload, internalSecret: $secret) {
+      `mutation ProcessReturn($provider: ChileanPaymentProvider!, $payload: JSON!) {
+        processProviderReturn(provider: $provider, payload: $payload) {
           paymentId
           status
         }
       }`,
-      { provider, payload, secret: this._internalSecret() },
+      { provider, payload },
     );
     // The subgraph returns the canonical Payment id (it looked the payment up
     // to commit it). Trust that over re-deriving it from the provider payload —
@@ -57,44 +59,38 @@ export class PaymentsService {
     };
   }
 
+  /**
+   * `rawBody` and `signature` are forwarded verbatim: the transactions subgraph
+   * verifies the HMAC once the payment lookup tells it which seller's secret
+   * applies. This layer cannot verify — it does not know the seller yet.
+   */
   async processWebhook(
     provider: ProviderId,
     eventType: string,
     payload: Record<string, unknown>,
+    rawBody?: string,
+    signature?: string,
   ): Promise<string> {
     const data = await this._callTransactions(
-      `mutation ProcessWebhook($provider: ChileanPaymentProvider!, $eventType: String!, $payload: JSON!, $secret: String!) {
-        processProviderWebhook(provider: $provider, eventType: $eventType, payload: $payload, internalSecret: $secret)
+      `mutation ProcessWebhook($provider: ChileanPaymentProvider!, $eventType: String!, $payload: JSON!, $rawBody: String, $signature: String) {
+        processProviderWebhook(provider: $provider, eventType: $eventType, payload: $payload, rawBody: $rawBody, signature: $signature)
       }`,
-      { provider, eventType, payload, secret: this._internalSecret() },
+      {
+        provider,
+        eventType,
+        payload,
+        rawBody: rawBody ?? null,
+        signature: signature ?? null,
+      },
     );
     return data['processProviderWebhook'] as string;
   }
 
-  /**
-   * Verifies a Khipu webhook signature against the raw request body.
-   * Khipu sends `x-khipu-signature` as a hex HMAC-SHA256 of the body using
-   * the seller's `webhookSecret`. We don't know which seller a webhook is
-   * for at this layer, so the transactions subgraph re-verifies after
-   * looking the payment up — but we still call this here as a cheap reject
-   * for obviously-bad requests.
-   */
-  verifyKhipuSignature(
-    rawBody: string,
-    header: string,
-    secret: string,
-  ): boolean {
-    if (!header || !secret) return false;
-    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-    const a = Buffer.from(expected);
-    const b = Buffer.from(header);
-    if (a.length !== b.length) return false;
-    try {
-      return timingSafeEqual(a, b);
-    } catch {
-      return false;
-    }
-  }
+  // Signature verification deliberately does not live here. It needs the
+  // seller's secret, which is only resolvable after the payment lookup in the
+  // transactions subgraph — see `PaymentsService._verifyWebhookSignature`
+  // there. A copy of the HMAC check used to sit at this layer, uncalled, while
+  // both layers' comments claimed the other one ran it.
 
   // ─── helpers ──────────────────────────────────────────────────────────────
 

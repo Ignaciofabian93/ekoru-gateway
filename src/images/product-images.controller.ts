@@ -5,23 +5,22 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  UseGuards,
+  Req,
   Logger,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImageProcessorClient } from './image-processor.client';
-
-const imageFileFilter = (
-  req: any,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-) => {
-  if (file.mimetype.startsWith('image/')) {
-    cb(null, true);
-  } else {
-    cb(new BadRequestException('Only image files are allowed!'), false);
-  }
-};
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import {
+  declaredImageFilter,
+  assertRealImage,
+  assertOwnsProduct,
+  parseNumericId,
+  sellerIdOf,
+} from './upload-security';
 
 @Controller('api/product-images')
 export class ProductImagesController {
@@ -32,16 +31,23 @@ export class ProductImagesController {
     private readonly imageProcessor: ImageProcessorClient,
   ) {}
 
+  /**
+   * Replaces a product's image set. This deletes the existing images before
+   * writing the new ones, so an unauthenticated caller could previously wipe
+   * the imagery of any product id they cared to name.
+   */
   @Post()
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(
     FilesInterceptor('files', 3, {
-      fileFilter: imageFileFilter,
+      fileFilter: declaredImageFilter,
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   async uploadProductImages(
     @UploadedFiles() files: Express.Multer.File[],
     @Body('productId') productId: string,
+    @Req() req: Request,
   ) {
     if (!files || files.length === 0) {
       throw new BadRequestException('No files received');
@@ -51,7 +57,12 @@ export class ProductImagesController {
       throw new BadRequestException('Product ID is required');
     }
 
-    const productIdNum = parseInt(productId, 10);
+    files.forEach(assertRealImage);
+
+    const sellerId = sellerIdOf(req);
+    const productIdNum = parseNumericId(productId, 'productId');
+    // Ownership is checked before anything is deleted.
+    await assertOwnsProduct(this.prisma, productIdNum, sellerId);
 
     await this.deleteExistingProductImages(productIdNum);
 

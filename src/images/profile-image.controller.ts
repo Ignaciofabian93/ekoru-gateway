@@ -13,18 +13,10 @@ import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImageProcessorClient } from './image-processor.client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-
-const imageFileFilter = (
-  req: any,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-) => {
-  if (file.mimetype.startsWith('image/')) {
-    cb(null, true);
-  } else {
-    cb(new BadRequestException('Only image files are allowed!'), false);
-  }
-};
+import {
+  declaredImageFilter as imageFileFilter,
+  assertRealImage,
+} from './upload-security';
 
 @Controller('api/profile-image')
 export class ProfileImageController {
@@ -50,6 +42,7 @@ export class ProfileImageController {
     if (!file) {
       throw new BadRequestException('No file received');
     }
+    assertRealImage(file);
 
     const userId = req.user.sellerId;
 

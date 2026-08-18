@@ -18,6 +18,26 @@ import {
 
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Failed attempts tolerated before a seller account is temporarily locked. */
+const MAX_LOGIN_ATTEMPTS = 8;
+
+/**
+ * How long the lock lasts. Long enough to make online guessing pointless, short
+ * enough that a legitimate owner who fat-fingered their password is not calling
+ * support. The lock is timed rather than permanent (as Admin's is) because a
+ * permanent lock on a public endpoint would let anyone disable any account.
+ */
+const LOCKOUT_MS = 15 * 60 * 1000;
+
+/**
+ * A real bcrypt hash, of a value nothing can log in with. Compared against when
+ * the email is unknown so that "no such account" costs the same wall-clock time
+ * as "wrong password" — otherwise the timing difference is itself the oracle
+ * the shared error message is meant to close.
+ */
+const DUMMY_HASH =
+  '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -54,6 +74,31 @@ export class AuthService {
     });
   }
 
+  /**
+   * Counts a failed attempt and locks the account once the threshold is hit.
+   *
+   * The counter is not reset when the lock is applied — it is cleared on the
+   * next successful sign-in. That means an attacker who waits out one lock and
+   * guesses wrong again is re-locked immediately rather than getting a fresh
+   * budget of attempts.
+   */
+  private async registerFailedLogin(
+    sellerId: string,
+    currentAttempts: number,
+  ): Promise<void> {
+    const attempts = currentAttempts + 1;
+    await this.prisma.seller.update({
+      where: { id: sellerId },
+      data: {
+        loginAttempts: attempts,
+        lockedUntil:
+          attempts >= MAX_LOGIN_ATTEMPTS
+            ? new Date(Date.now() + LOCKOUT_MS)
+            : null,
+      },
+    });
+  }
+
   private signRefreshToken(payload: Record<string, string>): string {
     return this.jwtService.sign(payload, {
       secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
@@ -73,17 +118,46 @@ export class AuthService {
       where: { email: formattedEmail },
     });
 
+    // One message for "no such account" and "wrong password" alike. Answering
+    // them differently turns this endpoint into a membership oracle: an
+    // attacker learns which addresses have accounts without guessing a single
+    // password. The password-reset flow (EK-4) was deliberately built this way;
+    // login should match it.
+    const rejectCredentials = () =>
+      new BadRequestException(
+        this.i18nService.translate('auth.invalid_credentials', language),
+      );
+
     if (!user) {
+      // Still spend the time a real bcrypt compare would, so response latency
+      // does not leak whether the address exists.
+      await compare(password, DUMMY_HASH);
+      throw rejectCredentials();
+    }
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
       throw new BadRequestException(
-        this.i18nService.translate('auth.user_not_found', language),
+        this.i18nService.translate('auth.account_locked', language),
       );
     }
 
     const valid = await compare(password, user.password);
     if (!valid) {
-      throw new BadRequestException(
-        this.i18nService.translate('auth.invalid_credentials', language),
-      );
+      await this.registerFailedLogin(user.id, user.loginAttempts);
+      throw rejectCredentials();
+    }
+
+    // Successful sign-in clears the counter and any expired lock.
+    if (user.loginAttempts !== 0 || user.lockedUntil) {
+      await this.prisma.seller.update({
+        where: { id: user.id },
+        data: { loginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
+      });
+    } else {
+      await this.prisma.seller.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      });
     }
 
     const token = this.jwtService.sign(
@@ -162,10 +236,20 @@ export class AuthService {
       data: { loginAttempts: 0, lastLoginAt: new Date() },
     });
 
-    const token = this.jwtService.sign(
-      { adminId: admin.id },
-      { expiresIn: '15m' },
-    );
+    // Role, type and business scope travel in the token so the subgraphs can
+    // enforce them. Until now the token carried only `adminId`, and every
+    // subgraph guard was a presence check — so any admin was effectively
+    // SUPER_ADMIN against the API, and the PLATFORM/BUSINESS split existed
+    // only in the React client.
+    const adminClaims = {
+      adminId: admin.id,
+      adminRole: admin.role,
+      adminType: admin.adminType,
+      // Business admins are scoped to their own seller; null for platform staff.
+      adminSellerId: admin.sellerId ?? null,
+    };
+
+    const token = this.jwtService.sign(adminClaims, { expiresIn: '15m' });
 
     const refreshToken = this.signRefreshToken({ adminId: admin.id });
 
@@ -264,8 +348,35 @@ export class AuthService {
 
       await this.tokenRepository.revoke(refreshToken);
 
+      // Re-read the admin rather than trusting the old token's claims. This is
+      // the only point at which a role change, a deactivation or a lock takes
+      // effect — without it, those were checked at login and then not again for
+      // the seven-day life of the refresh token.
+      const admin = await this.prisma.admin.findUnique({
+        where: { id: payload.adminId },
+        select: {
+          id: true,
+          role: true,
+          adminType: true,
+          sellerId: true,
+          isActive: true,
+          accountLocked: true,
+        },
+      });
+
+      if (!admin || !admin.isActive || admin.accountLocked) {
+        throw new UnauthorizedException(
+          this.i18nService.translate('auth.account_disabled', language),
+        );
+      }
+
       const newToken = this.jwtService.sign(
-        { adminId: payload.adminId },
+        {
+          adminId: admin.id,
+          adminRole: admin.role,
+          adminType: admin.adminType,
+          adminSellerId: admin.sellerId ?? null,
+        },
         { expiresIn: '15m' },
       );
 

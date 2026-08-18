@@ -26,6 +26,9 @@ describe('AuthService', () => {
     sellerType: 'PERSON' as const,
     isActive: true,
     isVerified: true,
+    loginAttempts: 0,
+    lockedUntil: null,
+    lastLoginAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     address: null,
@@ -62,6 +65,10 @@ describe('AuthService', () => {
           useValue: {
             seller: {
               findUnique: jest.fn(),
+              // Login now writes to the seller row: it clears the brute-force
+              // counter and stamps lastLoginAt on success, and increments the
+              // counter on failure.
+              update: jest.fn().mockResolvedValue(undefined),
             },
           },
         },
@@ -238,16 +245,71 @@ describe('AuthService', () => {
       expect(notificationsClient.sendLoginAlert).not.toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException if user not found', async () => {
+    // An unknown address and a wrong password must be indistinguishable to the
+    // caller, otherwise login doubles as a way to discover which addresses have
+    // accounts. This asserts the *sameness*, which is the actual requirement —
+    // the specific wording is free to change as long as both paths share it.
+    it('gives the same answer for an unknown address as for a wrong password', async () => {
       const res = mockResponse();
+
       jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue(null);
+      const unknownAddress = await service
+        .login('nonexistent@example.com', 'password123', res)
+        .catch((err: Error) => err);
+
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+      const wrongPassword = await service
+        .login('test@example.com', 'wrongpassword', res)
+        .catch((err: Error) => err);
+
+      expect(unknownAddress).toBeInstanceOf(BadRequestException);
+      expect(wrongPassword).toBeInstanceOf(BadRequestException);
+      expect((unknownAddress as Error).message).toBe(
+        (wrongPassword as Error).message,
+      );
+      expect((unknownAddress as Error).message).toBe('Credenciales inválidas');
+    });
+
+    it('locks the account once the attempt threshold is reached', async () => {
+      const res = mockResponse();
+      jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue({
+        ...mockSeller,
+        loginAttempts: 7, // one short of MAX_LOGIN_ATTEMPTS
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+      const update = jest.spyOn(prismaService.seller, 'update');
 
       await expect(
-        service.login('nonexistent@example.com', 'password123', res),
+        service.login('test@example.com', 'wrongpassword', res),
       ).rejects.toThrow(BadRequestException);
+
+      const data = update.mock.calls.at(-1)?.[0]?.data as {
+        loginAttempts?: number;
+        lockedUntil?: Date | null;
+      };
+      expect(data.loginAttempts).toBe(8);
+      expect(data.lockedUntil).toBeInstanceOf(Date);
+    });
+
+    it('refuses a locked account before checking the password', async () => {
+      const res = mockResponse();
+      jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue({
+        ...mockSeller,
+        lockedUntil: new Date(Date.now() + 60_000),
+      });
+      const compareSpy = bcrypt.compare as jest.Mock;
+      compareSpy.mockClear();
+
+      // The i18n mock in this suite only stubs a few keys, so assert the
+      // behaviour rather than the rendered string: the request is refused and
+      // the password is never even compared.
       await expect(
-        service.login('nonexistent@example.com', 'password123', res),
-      ).rejects.toThrow('No se encontró al usuario');
+        service.login('test@example.com', 'password123', res),
+      ).rejects.toThrow(BadRequestException);
+      expect(compareSpy).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if password is invalid', async () => {

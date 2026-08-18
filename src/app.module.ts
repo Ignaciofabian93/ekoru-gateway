@@ -10,6 +10,12 @@ import {
 import { verify } from 'jsonwebtoken';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
+import depthLimit from 'graphql-depth-limit';
+import {
+  selectionCountLimit,
+  MAX_DEPTH,
+  MAX_SELECTIONS,
+} from './graphql/validation-rules';
 import { AuthModule } from './auth/auth.module';
 import { ImagesModule } from './images/images.module';
 import { PaymentsModule } from './payments/payments.module';
@@ -21,6 +27,9 @@ interface GatewayContext {
   token?: string;
   sellerId?: string;
   adminId?: string;
+  adminRole?: string;
+  adminType?: string;
+  adminSellerId?: string;
   extensions?: {
     sellerId?: string;
     adminId?: string;
@@ -32,7 +41,6 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
   constructor(
     config: { url: string },
     private readonly jwtSecret: string,
-    private readonly jwtRefreshSecret: string,
   ) {
     super(config);
   }
@@ -65,33 +73,50 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
       gatewayContext?.adminId || gatewayContext?.extensions?.adminId;
     if (adminId) {
       request.http.headers.set('x-admin-id', adminId);
+      // Authorization inputs, not just identity: subgraphs need the role to
+      // decide *what* this admin may do, and the type/seller pair to keep a
+      // BUSINESS admin inside their own data.
+      if (gatewayContext.adminRole) {
+        request.http.headers.set('x-admin-role', gatewayContext.adminRole);
+      }
+      if (gatewayContext.adminType) {
+        request.http.headers.set('x-admin-type', gatewayContext.adminType);
+      }
+      if (gatewayContext.adminSellerId) {
+        request.http.headers.set(
+          'x-admin-seller-id',
+          gatewayContext.adminSellerId,
+        );
+      }
     }
 
-    // Forward the shared internal secret to the transactions subgraph so its
-    // `processProviderReturn` / `processProviderWebhook` mutations can verify
-    // that the call came from the gateway (not a public client). The
-    // PaymentsService also sends this directly when calling the subgraph from
-    // the REST controller; this header path covers any federated GraphQL
-    // request that might also hit internal mutations later.
-    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
-    if (internalSecret) {
-      request.http.headers.set('x-internal-secret', internalSecret);
-    }
+    // NOTE: `x-internal-secret` is deliberately NOT set here.
+    //
+    // It used to be attached to every federated request, which meant any
+    // public caller — including an anonymous one — arrived at the subgraphs
+    // already holding the credential that marks a request as internal. Since
+    // the subgraph guards trust that header, every "internal only" mutation
+    // (setProductAvailability, processProviderWebhook, awardPoints,
+    // activateMembershipSubscription, …) was reachable straight through this
+    // gateway without any authentication at all.
+    //
+    // Internal mutations are called service-to-service, never through
+    // federation: the gateway's own PaymentsService, and the transactions
+    // subgraph's MarketplaceClient / UsersClient, each set the header on their
+    // direct HTTP call. Nothing legitimate needs it on this path.
   }
 
+  /**
+   * Access-token secret only. Accepting the refresh secret here would let a
+   * refresh token be forwarded to the subgraphs as a bearer credential, which
+   * is the same 7-day-session problem the context factory now avoids.
+   */
   private validateToken(token: string): boolean {
     try {
-      // Try access token secret first
       verify(token, this.jwtSecret);
       return true;
     } catch {
-      try {
-        // Try refresh token secret as fallback
-        verify(token, this.jwtRefreshSecret);
-        return true;
-      } catch {
-        return false;
-      }
+      return false;
     }
   }
 }
@@ -146,9 +171,10 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
           { name: 'transactions', url: getServiceUrl('TRANSACTIONS') },
         ].filter((s) => s.url);
 
+        // Only the access-token secret is needed here. `JWT_REFRESH_SECRET`
+        // is used exclusively by AuthService on the `/session/*` routes, which
+        // is the only place a refresh token is now accepted.
         const jwtSecret = configService.get<string>('JWT_SECRET') || '';
-        const jwtRefreshSecret =
-          configService.get<string>('JWT_REFRESH_SECRET') || '';
 
         return {
           gateway: {
@@ -156,63 +182,66 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
               subgraphs,
             }),
             buildService({ url }: { name: string; url?: string }) {
-              return new AuthenticatedDataSource(
-                { url: url! },
-                jwtSecret,
-                jwtRefreshSecret,
-              );
+              return new AuthenticatedDataSource({ url: url! }, jwtSecret);
             },
           },
           server: {
-            introspection: true,
+            // Off in production: the supergraph schema lists every mutation,
+            // including the internal ones, and there is no reason to hand that
+            // map out publicly. Staging keeps it for tooling.
+            introspection: environment !== 'production',
+            // Bounds the cost of a single request. See ./graphql/validation-rules.
+            validationRules: [
+              depthLimit(MAX_DEPTH),
+              selectionCountLimit(MAX_SELECTIONS),
+            ],
             context: ({ req, res }: { req: any; res: any }) => {
               /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
-              // Extract token from cookies or headers
+              // Only the short-lived access token authenticates a GraphQL
+              // request. The refresh token is deliberately NOT accepted here.
+              //
+              // It used to be a fallback when the access token had expired,
+              // which meant a 7-day credential authenticated every operation —
+              // and because revocation is only checked in `/session/refresh`,
+              // logging out or disabling an account left the token working
+              // until it expired. Clients that get a 401 should call
+              // `POST /session/refresh`, which rotates the pair and does check
+              // revocation. Both web and mobile already do exactly that.
               const accessToken: string =
                 req.cookies?.token ||
                 req.headers?.authorization?.split(' ')[1] ||
                 '';
-              const refreshToken: string = req.cookies?.refreshToken || '';
 
-              let token = '';
-              let decoded: {
+              type AccessClaims = {
                 sellerId?: string;
                 adminId?: string;
-              } | null = null;
+                adminRole?: string;
+                adminType?: string;
+                adminSellerId?: string | null;
+              };
+
+              let token = '';
+              let decoded: AccessClaims | null = null;
 
               if (accessToken) {
                 try {
-                  decoded = verify(accessToken, jwtSecret) as {
-                    sellerId?: string;
-                    adminId?: string;
-                  };
+                  decoded = verify(accessToken, jwtSecret) as AccessClaims;
                   token = accessToken;
                 } catch {
-                  // expired or invalid access token, fall through to refresh
+                  // Expired or invalid: the request continues unauthenticated
+                  // and resolvers reject it. The client refreshes and retries.
                 }
               }
-
-              if (!decoded && refreshToken) {
-                try {
-                  decoded = verify(refreshToken, jwtRefreshSecret) as {
-                    sellerId?: string;
-                    adminId?: string;
-                  };
-                  token = refreshToken;
-                } catch {
-                  // refresh token also invalid
-                }
-              }
-
-              const sellerId = decoded?.sellerId;
-              const adminId = decoded?.adminId;
 
               return {
                 req,
                 res,
                 token,
-                sellerId,
-                adminId,
+                sellerId: decoded?.sellerId,
+                adminId: decoded?.adminId,
+                adminRole: decoded?.adminRole,
+                adminType: decoded?.adminType,
+                adminSellerId: decoded?.adminSellerId ?? undefined,
               } as GatewayContext & { req: any; res: any };
               /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
             },

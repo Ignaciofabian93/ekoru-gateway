@@ -85,40 +85,71 @@ export class PaymentsController {
    * Webpay does NOT send async webhooks — the return URL POST IS the signal.
    * Khipu and MercadoPago both do. Each has its own auth scheme.
    */
+  /**
+   * The signature is verified in the transactions subgraph, not here: the HMAC
+   * key is the seller's `secretKey`, and which seller this webhook belongs to
+   * is only known once the payment has been looked up. This handler rejects
+   * unsigned requests as a cheap first filter and forwards the raw bytes the
+   * provider actually signed.
+   */
   @Post('webhook/khipu')
   async khipuWebhook(
-    @Req() req: Request,
+    @Req() req: Request & { rawBody?: string },
     @Headers('x-khipu-signature') signature: string,
     @Body() body: Record<string, unknown>,
   ) {
-    // The transactions subgraph re-verifies after looking the payment up
-    // (different sellers, different secrets). Here we only reject obviously
-    // unsigned requests — see docs/CHECKOUT.md §3.5 for the full rationale.
     if (!signature) {
       this.logger.warn('Khipu webhook missing x-khipu-signature');
       return { ok: false };
     }
     const eventType =
       typeof body['event'] === 'string' ? body['event'] : 'notify';
-    await this.payments.processWebhook('KHIPU', eventType, body);
+    try {
+      await this.payments.processWebhook(
+        'KHIPU',
+        eventType,
+        body,
+        req.rawBody,
+        signature,
+      );
+    } catch (err) {
+      // A rejected signature must not look like success to the caller, but it
+      // also must not leak why it failed.
+      this.logger.warn(`Khipu webhook rejected: ${String(err)}`);
+      return { ok: false };
+    }
     return { ok: true };
   }
 
+  /**
+   * MercadoPago's `x-signature` verification is not implemented, so the
+   * subgraph refuses these webhooks outright rather than acting on unverified
+   * events. The provider is not enabled for real sellers; implementing the
+   * HMAC check is a prerequisite for switching it on (EK-1 / SEC-2).
+   */
   @Post('webhook/mercadopago')
   async mercadoPagoWebhook(
-    @Req() req: Request,
+    @Req() req: Request & { rawBody?: string },
+    @Headers('x-signature') signature: string,
     @Body() body: Record<string, unknown>,
   ) {
     const eventType =
       (body['type'] as string) ??
       (req.query['topic'] as string) ??
       'notification';
-    // TODO: verify MercadoPago's `x-signature` header here using the seller's
-    // webhook secret. Same pattern as Khipu — we only know which seller this
-    // is for after the subgraph looks the payment up, so deeper verification
-    // happens there. Reject empty bodies as a cheap first filter.
     if (!body || Object.keys(body).length === 0) return { ok: false };
-    await this.payments.processWebhook('MERCADOPAGO', eventType, body);
+    try {
+      await this.payments.processWebhook(
+        'MERCADOPAGO',
+        eventType,
+        body,
+        req.rawBody,
+        signature,
+      );
+    } catch (err) {
+      this.logger.warn(`MercadoPago webhook rejected: ${String(err)}`);
+      return { ok: false };
+    }
     return { ok: true };
   }
 
@@ -199,18 +230,50 @@ export class PaymentsController {
 
   /**
    * The buyer started the flow on the web app and needs to come back to it
-   * after the provider redirect. We derive the web-app origin from the
-   * Referer or fall back to an env var.
+   * after the provider redirect.
+   *
+   * The Referer is a hint, not an instruction: it is attacker-influenced, so a
+   * page that links a buyer into `/payments/return/:provider` could otherwise
+   * choose the redirect target and receive them — plus the `paymentId` — on its
+   * own origin. Only origins we actually serve the web app from are honoured;
+   * anything else falls back to the configured base URL.
    */
   private _webAppBase(req: Request): string {
+    const fallback = process.env.WEB_APP_BASE_URL ?? '';
     const referer = req.headers.referer;
-    if (referer) {
-      try {
-        return new URL(referer).origin;
-      } catch {
-        // ignore — fall through
-      }
+    if (!referer) return fallback;
+
+    let origin: string;
+    try {
+      origin = new URL(referer).origin;
+    } catch {
+      return fallback;
     }
-    return process.env.WEB_APP_BASE_URL ?? '';
+
+    return this._allowedWebAppOrigins().includes(origin) ? origin : fallback;
+  }
+
+  /**
+   * Origins the buyer may be returned to. `WEB_APP_BASE_URL` is always
+   * included so the fallback is self-consistent; `WEB_APP_RETURN_ORIGINS` is an
+   * optional comma-separated list for the other clients (admin, staging).
+   */
+  private _allowedWebAppOrigins(): string[] {
+    const configured = [
+      process.env.WEB_APP_BASE_URL,
+      ...(process.env.WEB_APP_RETURN_ORIGINS ?? '').split(','),
+    ];
+
+    return configured
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value))
+      .map((value) => {
+        try {
+          return new URL(value).origin;
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean);
   }
 }

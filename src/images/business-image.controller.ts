@@ -5,26 +5,23 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  UseGuards,
+  Req,
   Logger,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import { ImageEntity, ImageProcessorClient } from './image-processor.client';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
-  ImageEntity,
-  ImageProcessorClient,
-} from './image-processor.client';
-
-const imageFileFilter = (
-  req: any,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-) => {
-  if (file.mimetype.startsWith('image/')) {
-    cb(null, true);
-  } else {
-    cb(new BadRequestException('Only image files are allowed!'), false);
-  }
-};
+  declaredImageFilter,
+  assertRealImage,
+  assertOwnsStoreProduct,
+  assertOwnsService,
+  parseNumericId,
+  sellerIdOf,
+} from './upload-security';
 
 @Controller('api/business-image')
 export class BusinessImageController {
@@ -35,10 +32,16 @@ export class BusinessImageController {
     private readonly imageProcessor: ImageProcessorClient,
   ) {}
 
+  /**
+   * Adds an image to a store product or a service. Both are seller-owned rows
+   * and the existing imagery is deleted first, so the caller must own the row
+   * named in `itemId` — checked before any deletion happens.
+   */
   @Post()
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('file', {
-      fileFilter: imageFileFilter,
+      fileFilter: declaredImageFilter,
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
@@ -46,6 +49,7 @@ export class BusinessImageController {
     @UploadedFile() file: Express.Multer.File,
     @Body('itemId') itemId: string,
     @Body('itemType') itemType: string,
+    @Req() req: Request,
   ) {
     if (!file) {
       throw new BadRequestException('No file received');
@@ -59,6 +63,16 @@ export class BusinessImageController {
       throw new BadRequestException(
         'Item type is required (storeProduct or service)',
       );
+    }
+
+    assertRealImage(file);
+
+    const sellerId = sellerIdOf(req);
+    const numericItemId = parseNumericId(itemId, 'itemId');
+    if (itemType === 'storeProduct') {
+      await assertOwnsStoreProduct(this.prisma, numericItemId, sellerId);
+    } else {
+      await assertOwnsService(this.prisma, numericItemId, sellerId);
     }
 
     await this.deleteExistingBusinessImages(itemId, itemType);

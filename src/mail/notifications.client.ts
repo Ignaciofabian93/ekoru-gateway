@@ -61,19 +61,14 @@ export class NotificationsClient {
     data: Record<string, unknown>;
   }): Promise<boolean> {
     const mutation = /* GraphQL */ `
-      mutation EmitNotification(
-        $input: EmitNotificationInput!
-        $secret: String!
-      ) {
-        emitNotification(input: $input, internalSecret: $secret)
+      mutation EmitNotification($input: EmitNotificationInput!) {
+        emitNotification(input: $input)
       }
     `;
 
     try {
-      const data = await this._callUsers(mutation, {
-        input,
-        secret: this._internalSecret(),
-      });
+      // The secret goes on the `x-internal-secret` header in `_callUsers`.
+      const data = await this._callUsers(mutation, { input });
       return data['emitNotification'] != null;
     } catch (error) {
       this.logger.error(

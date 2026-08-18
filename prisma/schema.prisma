@@ -160,6 +160,13 @@ model Seller {
   sellerType                             SellerType
   isActive                               Boolean                          @default(true)
   isVerified                             Boolean                          @default(false)
+  // Brute-force protection on /session/auth. Unlike Admin — which uses a
+  // permanent `accountLocked` an operator must clear — sellers get a *timed*
+  // lock: a permanent one on a public signup endpoint lets anyone lock any
+  // account out by failing a few logins against their address.
+  loginAttempts                          Int                              @default(0)
+  lockedUntil                            DateTime?
+  lastLoginAt                            DateTime?
   createdAt                              DateTime                         @default(now())
   updatedAt                              DateTime                         @updatedAt
   address                                String?
