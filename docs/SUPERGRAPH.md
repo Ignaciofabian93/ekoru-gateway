@@ -90,7 +90,7 @@ Order of operations for a change that spans a subgraph and the router:
 ## Smoke test
 
 ```bash
-npm run smoke -- https://api.staging.ekoru.cl/graphql
+npm run smoke -- https://staging-api.ekoru.cl/graphql
 # or
 GATEWAY_GRAPHQL_URL=https://api.ekoru.cl/graphql npm run smoke
 ```
