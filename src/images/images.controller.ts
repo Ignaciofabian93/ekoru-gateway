@@ -11,14 +11,11 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import { ImageProcessorClient } from './image-processor.client';
-import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtAdminGuard } from '../auth/guards/jwt-admin.guard';
 import {
   declaredImageFilter,
   assertRealImage,
-  assertOwnsProduct,
-  parseNumericId,
   sellerIdOf,
 } from './upload-security';
 
@@ -37,10 +34,7 @@ const UPLOAD_OPTIONS = {
  */
 @Controller('api/images')
 export class ImagesController {
-  constructor(
-    private readonly imageProcessor: ImageProcessorClient,
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly imageProcessor: ImageProcessorClient) {}
 
   /**
    * Catalog/department artwork is a platform asset, not a seller's, so this is
@@ -62,28 +56,39 @@ export class ImagesController {
     return { success: true, key: processed.key, imageUrl: processed.url };
   }
 
+  /**
+   * Listing imagery, uploaded by the publish wizard *before* the product row
+   * exists — the mutation that creates it takes the R2 keys as an argument.
+   * So there is no product id to check ownership against, and the namespace
+   * comes from the verified token rather than the request body, exactly as
+   * `upload/user` below does.
+   *
+   * That keeps the property the per-product check was there for: a caller can
+   * only ever write under their own seller id, and an `entityId` supplied by
+   * the client is ignored rather than trusted.
+   *
+   * This route used to run `assertOwnsProduct` against an `entityId` from the
+   * body, which could never pass from the wizard: web sends the seller's UUID
+   * (rejected by `parseNumericId`) and mobile sends no field at all, while a
+   * genuine product id would have failed the ownership check a line later
+   * because the product does not exist yet. Publishing was returning 400 on
+   * both clients.
+   */
   @Post('upload/product')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('image', UPLOAD_OPTIONS))
   async uploadProductImage(
     @UploadedFile() file: Express.Multer.File,
-    @Body('entityId') entityId: string,
     @Req() req: Request,
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
-    if (!entityId) throw new BadRequestException('entityId is required');
     assertRealImage(file);
 
-    // The product named in the body has to belong to the caller, otherwise a
-    // signed-in seller can overwrite anyone's imagery.
     const sellerId = sellerIdOf(req);
-    const productId = parseNumericId(entityId, 'entityId');
-    await assertOwnsProduct(this.prisma, productId, sellerId);
-
     const processed = await this.imageProcessor.upload(
       file,
       'product',
-      entityId,
+      sellerId,
     );
 
     return { success: true, key: processed.key, imageUrl: processed.url };
