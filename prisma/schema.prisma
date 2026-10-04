@@ -129,6 +129,14 @@ enum ProductCondition {
   REFURBISHED
 }
 
+enum ProductSize {
+  XS
+  S
+  M
+  L
+  XL
+}
+
 enum WeightUnit {
   KG
   LB
@@ -350,11 +358,14 @@ model StoreProduct {
   saleCount     Int   @default(0)
   viewCount     Int   @default(0)
 
-  // Product Specifications
+  // Product Specifications. weight/weightUnit/size describe this product; when
+  // the seller leaves them empty, the subcategory's averageWeight/weightUnit/size
+  // are the fallback (impact calculation, shipping).
   materialComposition String?
   recycledContent     Float?
   weight              Float?
   weightUnit          WeightUnit?    @default(KG)
+  size                ProductSize?
   length              Float?
   width               Float?
   height              Float?
