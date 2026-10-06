@@ -88,6 +88,12 @@ enum BusinessType {
   MIXED
 }
 
+enum BusinessApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum Badge {
   POPULAR
   DISCOUNTED
@@ -282,10 +288,22 @@ model BusinessProfile {
   businessMembershipSubscriptionId Int?
   seller                           Seller                          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
+  // Onboarding review. A new business starts PENDING and cannot sign in until
+  // EKORU approves it, so nothing (products, categories, materials) is
+  // published before the business has been checked. `applicationMessage` is
+  // what the business told us at sign-up (what it sells, materials, process);
+  // `rejectionReason` is emailed to it. `reviewedById` is the Admin id.
+  approvalStatus     BusinessApprovalStatus @default(PENDING)
+  applicationMessage String?
+  reviewedAt         DateTime?
+  reviewedById       String?
+  rejectionReason    String?
+
   @@index([taxId])
   @@index([businessType])
   @@index([businessMembershipSubscriptionId])
   @@index([sellerId])
+  @@index([approvalStatus])
 }
 
 model Product {

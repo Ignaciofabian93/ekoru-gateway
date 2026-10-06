@@ -116,6 +116,7 @@ export class AuthService {
     const formattedEmail = email.toLowerCase();
     const user = await this.prisma.seller.findUnique({
       where: { email: formattedEmail },
+      include: { businessProfile: { select: { approvalStatus: true } } },
     });
 
     // One message for "no such account" and "wrong password" alike. Answering
@@ -145,6 +146,21 @@ export class AuthService {
     if (!valid) {
       await this.registerFailedLogin(user.id, user.loginAttempts);
       throw rejectCredentials();
+    }
+
+    // A business signs in only once EKORU has reviewed and approved it, so
+    // nothing gets published before that review. Checked after the password
+    // on purpose: only the account owner learns the review state.
+    const approvalStatus = user.businessProfile?.approvalStatus;
+    if (approvalStatus && approvalStatus !== 'APPROVED') {
+      throw new BadRequestException(
+        this.i18nService.translate(
+          approvalStatus === 'REJECTED'
+            ? 'auth.account_rejected'
+            : 'auth.account_pending',
+          language,
+        ),
+      );
     }
 
     // Successful sign-in clears the counter and any expired lock.

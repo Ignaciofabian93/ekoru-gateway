@@ -17,6 +17,7 @@ describe('AuthService', () => {
   let prismaService: PrismaService;
   let jwtService: JwtService;
   let configService: ConfigService;
+  let i18nService: I18nService;
   let notificationsClient: { sendLoginAlert: jest.Mock };
 
   const mockSeller = {
@@ -129,6 +130,7 @@ describe('AuthService', () => {
     prismaService = module.get<PrismaService>(PrismaService);
     jwtService = module.get<JwtService>(JwtService);
     configService = module.get<ConfigService>(ConfigService);
+    i18nService = module.get<I18nService>(I18nService);
   });
 
   it('should be defined', () => {
@@ -161,6 +163,7 @@ describe('AuthService', () => {
       );
       expect(prismaService.seller.findUnique).toHaveBeenCalledWith({
         where: { email: 'test@example.com' },
+        include: { businessProfile: { select: { approvalStatus: true } } },
       });
       const cookieSpy = res.cookie as jest.Mock;
       expect(cookieSpy).toHaveBeenCalledTimes(2);
@@ -188,6 +191,7 @@ describe('AuthService', () => {
 
       expect(prismaService.seller.findUnique).toHaveBeenCalledWith({
         where: { email: 'test@example.com' },
+        include: { businessProfile: { select: { approvalStatus: true } } },
       });
     });
 
@@ -310,6 +314,64 @@ describe('AuthService', () => {
         service.login('test@example.com', 'password123', res),
       ).rejects.toThrow(BadRequestException);
       expect(compareSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['PENDING', 'auth.account_pending'],
+      ['REJECTED', 'auth.account_rejected'],
+    ] as const)(
+      'refuses a %s business after a correct password, without issuing tokens',
+      async (approvalStatus, key) => {
+        const res = mockResponse();
+        jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue({
+          ...mockSeller,
+          sellerType: 'COMPANY',
+          businessProfile: { approvalStatus },
+        } as never);
+        (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+        const translate = jest.spyOn(i18nService, 'translate');
+        const signSpy = jest.spyOn(jwtService, 'sign');
+        signSpy.mockClear();
+
+        await expect(
+          service.login('test@example.com', 'password123', res),
+        ).rejects.toThrow(BadRequestException);
+        expect(translate).toHaveBeenCalledWith(key, expect.anything());
+        expect(signSpy).not.toHaveBeenCalled();
+        expect(res.cookie as jest.Mock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not reveal the review state to a wrong password', async () => {
+      const res = mockResponse();
+      jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue({
+        ...mockSeller,
+        sellerType: 'COMPANY',
+        businessProfile: { approvalStatus: 'PENDING' },
+      } as never);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.login('test@example.com', 'wrongpassword', res),
+      ).rejects.toThrow('Credenciales inválidas');
+    });
+
+    it('lets an approved business sign in', async () => {
+      const res = mockResponse();
+      jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue({
+        ...mockSeller,
+        sellerType: 'COMPANY',
+        businessProfile: { approvalStatus: 'APPROVED' },
+      } as never);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest
+        .spyOn(jwtService, 'sign')
+        .mockReturnValueOnce('access-token')
+        .mockReturnValueOnce('refresh-token');
+
+      await expect(
+        service.login('test@example.com', 'password123', res),
+      ).resolves.toEqual(expect.objectContaining({ token: 'access-token' }));
     });
 
     it('should throw BadRequestException if password is invalid', async () => {
