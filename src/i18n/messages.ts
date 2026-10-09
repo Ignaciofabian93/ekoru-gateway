@@ -13,7 +13,7 @@ export const translations: Record<string, TranslationMap> = {
     'auth.account_pending':
       'Tu cuenta está en revisión. Te avisaremos por correo cuando EKORU la apruebe.',
     'auth.account_rejected':
-      'Tu solicitud no fue aprobada. Revisa tu correo para ver el motivo o escríbenos a contacto@ekoru.cl.',
+      'Tu solicitud no fue aprobada. Revisa tu correo para ver el motivo; puedes volver a postular desde "¿Tu negocio no fue aprobado?" en esta página.',
     'auth.login_success': 'Inicio de sesión exitoso',
     'auth.session_closed': 'Sesión cerrada exitosamente',
     'auth.token_refresh_failed': 'No se pudo generar un nuevo token de acceso',
@@ -29,7 +29,7 @@ export const translations: Record<string, TranslationMap> = {
     'auth.account_pending':
       "Your account is under review. We'll email you once EKORU approves it.",
     'auth.account_rejected':
-      'Your application was not approved. Check your email for the reason or write to contacto@ekoru.cl.',
+      'Your application was not approved. Check your email for the reason; you can apply again from "Business not approved?" on this page.',
     'auth.login_success': 'Login successful',
     'auth.session_closed': 'Session closed successfully',
     'auth.token_refresh_failed': 'Could not generate a new access token',
