@@ -13,6 +13,12 @@ async function bootstrap() {
   const environment = configService.get<string>('ENVIRONMENT', 'development');
   const port = configService.get<number>('PORT', 4000);
 
+  // The gateway sits behind exactly one reverse proxy (nginx), so trust its
+  // X-Forwarded-For hop. Without this `req.ip` is nginx's address, every
+  // visitor shares one rate-limit bucket, and the client IP forwarded to the
+  // subgraphs (x-client-ip) is meaningless.
+  app.set('trust proxy', 1);
+
   // Security headers with Helmet
   app.use(
     helmet({

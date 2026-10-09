@@ -30,6 +30,8 @@ interface GatewayContext {
   adminRole?: string;
   adminType?: string;
   adminSellerId?: string;
+  /** Visitor IP as seen through nginx; subgraphs rate-limit on it. */
+  clientIp?: string;
   extensions?: {
     sellerId?: string;
     adminId?: string;
@@ -62,6 +64,11 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
         );
       }
     }
+
+    // Subgraphs only ever see the gateway's address, so per-visitor rate
+    // limits need the real client IP. Always overwrite: a client-supplied
+    // value must never reach a subgraph.
+    request.http.headers.set('x-client-ip', gatewayContext?.clientIp ?? '');
 
     const sellerId =
       gatewayContext?.sellerId || gatewayContext?.extensions?.sellerId;
@@ -242,6 +249,7 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
                 adminRole: decoded?.adminRole,
                 adminType: decoded?.adminType,
                 adminSellerId: decoded?.adminSellerId ?? undefined,
+                clientIp: req.ip,
               } as GatewayContext & { req: any; res: any };
               /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
             },
