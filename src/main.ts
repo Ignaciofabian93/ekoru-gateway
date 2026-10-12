@@ -5,6 +5,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import type { IncomingMessage } from 'http';
+import { metricsGuard } from './middleware/metrics-guard';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -18,6 +19,9 @@ async function bootstrap() {
   // visitor shares one rate-limit bucket, and the client IP forwarded to the
   // subgraphs (x-client-ip) is meaningless.
   app.set('trust proxy', 1);
+
+  // Metrics stay on the docker network: through nginx they are a 404 (GW-1).
+  app.use('/metrics', metricsGuard(configService.get<string>('METRICS_TOKEN')));
 
   // Security headers with Helmet
   app.use(
