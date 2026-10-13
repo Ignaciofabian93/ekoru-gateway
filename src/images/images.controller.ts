@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
+import { PrismaService } from '../prisma/prisma.service';
 import { ImageProcessorClient } from './image-processor.client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtAdminGuard } from '../auth/guards/jwt-admin.guard';
@@ -24,6 +25,9 @@ const UPLOAD_OPTIONS = {
   limits: { fileSize: 10 * 1024 * 1024 },
 };
 
+/** Most keys one release call may name; an edit drops a handful at most. */
+const MAX_RELEASE = 20;
+
 /**
  * Generic upload routes.
  *
@@ -34,7 +38,55 @@ const UPLOAD_OPTIONS = {
  */
 @Controller('api/images')
 export class ImagesController {
-  constructor(private readonly imageProcessor: ImageProcessorClient) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly imageProcessor: ImageProcessorClient,
+  ) {}
+
+  /**
+   * Deletes listing images an edit dropped (GW-3). The web calls it after a
+   * product, store product or service is saved with fewer images. Only keys
+   * under the caller's own `product/<sellerId>/` namespace (where
+   * `upload/product` writes) are considered, and only once no product, store
+   * product or service lists them any more, soft-deleted ones included, so a
+   * stale or forged key can never break a listing. Returns how many went.
+   */
+  @Post('release')
+  @UseGuards(JwtAuthGuard)
+  async releaseImages(@Body('keys') keys: unknown, @Req() req: Request) {
+    if (!Array.isArray(keys)) {
+      throw new BadRequestException('keys must be a list');
+    }
+    const prefix = `product/${sellerIdOf(req)}/`;
+    const candidates = [
+      ...new Set(
+        keys.filter(
+          (key): key is string =>
+            typeof key === 'string' &&
+            key.startsWith(prefix) &&
+            !key.slice(prefix.length).includes('/'),
+        ),
+      ),
+    ].slice(0, MAX_RELEASE);
+
+    let deleted = 0;
+    for (const key of candidates) {
+      if (await this.isListed(key)) continue;
+      await this.imageProcessor.delete(key);
+      deleted++;
+    }
+    return { deleted };
+  }
+
+  private async isListed(key: string): Promise<boolean> {
+    const where = { images: { has: key } };
+    const counts = await Promise.all([
+      this.prisma.product.count({ where }),
+      this.prisma.storeProduct.count({ where }),
+      this.prisma.service.count({ where }),
+    ]);
+    return counts.some((count) => count > 0);
+  }
 
   /**
    * Catalog/department artwork is a platform asset, not a seller's, so this is

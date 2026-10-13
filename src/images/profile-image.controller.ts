@@ -46,7 +46,7 @@ export class ProfileImageController {
 
     const userId = req.user.sellerId;
 
-    await this.deleteExistingProfileImage(userId);
+    const previousKey = await this.findExistingProfileImage(userId);
 
     const processed = await this.imageProcessor.upload(
       file,
@@ -55,6 +55,9 @@ export class ProfileImageController {
     );
 
     await this.updateUserProfileImage(userId, processed.key);
+    // Only once the profile points at the new image is the old one removed,
+    // so a failed upload never leaves the profile on a deleted file (GW-3).
+    await this.deleteQuietly(previousKey, userId);
 
     return {
       message: 'File uploaded and processed successfully',
@@ -67,7 +70,20 @@ export class ProfileImageController {
     };
   }
 
-  private async deleteExistingProfileImage(userId: string): Promise<void> {
+  private async deleteQuietly(key: string | null, userId: string) {
+    if (!key) return;
+    try {
+      await this.imageProcessor.delete(key);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to delete the old profile image of ${userId}: ${String(error)}`,
+      );
+    }
+  }
+
+  private async findExistingProfileImage(
+    userId: string,
+  ): Promise<string | null> {
     try {
       const user = await this.prisma.seller.findUnique({
         where: { id: userId },
@@ -93,13 +109,12 @@ export class ProfileImageController {
         existingKey = businessProfile?.logo ?? null;
       }
 
-      if (existingKey) {
-        await this.imageProcessor.delete(existingKey);
-      }
+      return existingKey;
     } catch (error) {
       this.logger.warn(
-        `Failed to delete existing profile image for ${userId}: ${String(error)}`,
+        `Failed to read the profile image of ${userId}: ${String(error)}`,
       );
+      return null;
     }
   }
 

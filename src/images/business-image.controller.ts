@@ -75,8 +75,6 @@ export class BusinessImageController {
       await assertOwnsService(this.prisma, numericItemId, sellerId);
     }
 
-    await this.deleteExistingBusinessImages(itemId, itemType);
-
     const entity: ImageEntity = itemType === 'service' ? 'service' : 'product';
     const processed = await this.imageProcessor.upload(file, entity, itemId);
 
@@ -93,39 +91,11 @@ export class BusinessImageController {
     };
   }
 
-  private async deleteExistingBusinessImages(
-    itemId: string,
-    itemType: string,
-  ): Promise<void> {
-    try {
-      let existingKeys: string[] = [];
-
-      if (itemType === 'storeProduct') {
-        const storeProduct = await this.prisma.storeProduct.findUnique({
-          where: { id: parseInt(itemId) },
-          select: { images: true },
-        });
-        existingKeys = storeProduct?.images || [];
-      } else if (itemType === 'service') {
-        const service = await this.prisma.service.findUnique({
-          where: { id: parseInt(itemId) },
-          select: { images: true },
-        });
-        existingKeys = service?.images || [];
-      }
-
-      if (existingKeys.length > 0) {
-        await Promise.all(
-          existingKeys.map((key) => this.imageProcessor.delete(key)),
-        );
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Failed to delete existing ${itemType} images for ${itemId}: ${String(error)}`,
-      );
-    }
-  }
-
+  /**
+   * Adds the image to the item's list. It used to delete every existing image
+   * file first while keeping their keys in the list, which left the listing
+   * pointing at files that no longer existed (GW-3).
+   */
   private async updateBusinessImage(
     itemId: string,
     itemType: string,

@@ -281,6 +281,9 @@ model BusinessProfile {
   serviceArea                      String?
   yearsOfExperience                Int?
   certifications                   String[]
+  // Eco descriptors the business picks in Edit profile (ids from the users
+  // subgraph's businessTags catalog, at most three).
+  tags                             String[]                        @default([])
   travelRadius                     Int?
   businessHours                    Json?
   createdAt                        DateTime                        @default(now())
@@ -379,7 +382,6 @@ model StoreProduct {
   // Product Specifications. weight/weightUnit/size describe this product; when
   // the seller leaves them empty, the subcategory's averageWeight/weightUnit/size
   // are the fallback (impact calculation, shipping).
-  materialComposition String?
   recycledContent     Float?
   weight              Float?
   weightUnit          WeightUnit?    @default(KG)

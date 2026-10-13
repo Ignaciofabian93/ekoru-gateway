@@ -62,7 +62,7 @@ export class CoverImageController {
 
     const userId = req.user.sellerId;
 
-    await this.deleteExistingCoverImage(userId);
+    const previousKey = await this.findExistingCoverImage(userId);
 
     const processed = await this.imageProcessor.upload(
       file,
@@ -71,6 +71,9 @@ export class CoverImageController {
     );
 
     await this.updateUserCoverImage(userId, processed.key);
+    // Only once the profile points at the new cover is the old one removed,
+    // so a failed upload never leaves the profile on a deleted file (GW-3).
+    await this.deleteQuietly(previousKey, userId);
 
     return {
       message: 'File uploaded and processed successfully',
@@ -83,7 +86,18 @@ export class CoverImageController {
     };
   }
 
-  private async deleteExistingCoverImage(userId: string): Promise<void> {
+  private async deleteQuietly(key: string | null, userId: string) {
+    if (!key) return;
+    try {
+      await this.imageProcessor.delete(key);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to delete the old cover image of ${userId}: ${String(error)}`,
+      );
+    }
+  }
+
+  private async findExistingCoverImage(userId: string): Promise<string | null> {
     try {
       const user = await this.prisma.seller.findUnique({
         where: { id: userId },
@@ -109,13 +123,12 @@ export class CoverImageController {
         existingKey = businessProfile?.coverImage ?? null;
       }
 
-      if (existingKey) {
-        await this.imageProcessor.delete(existingKey);
-      }
+      return existingKey;
     } catch (error) {
       this.logger.warn(
-        `Failed to delete existing cover image for ${userId}: ${String(error)}`,
+        `Failed to read the cover image of ${userId}: ${String(error)}`,
       );
+      return null;
     }
   }
 

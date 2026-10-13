@@ -32,9 +32,9 @@ export class ProductImagesController {
   ) {}
 
   /**
-   * Replaces a product's image set. This deletes the existing images before
-   * writing the new ones, so an unauthenticated caller could previously wipe
-   * the imagery of any product id they cared to name.
+   * Replaces a product's image set and then deletes the replaced files. An
+   * unauthenticated caller could once wipe the imagery of any product id they
+   * cared to name, so ownership is checked first.
    */
   @Post()
   @UseGuards(JwtAuthGuard)
@@ -64,7 +64,10 @@ export class ProductImagesController {
     // Ownership is checked before anything is deleted.
     await assertOwnsProduct(this.prisma, productIdNum, sellerId);
 
-    await this.deleteExistingProductImages(productIdNum);
+    const previous = await this.prisma.product.findUnique({
+      where: { id: productIdNum },
+      select: { images: true },
+    });
 
     const processedImages = await Promise.all(
       files.map((file) =>
@@ -78,6 +81,11 @@ export class ProductImagesController {
       where: { id: productIdNum },
       data: { images: keys },
     });
+    // The old set goes only once the product points at the new one (GW-3).
+    await this.deleteQuietly(
+      (previous?.images ?? []).filter((key) => !keys.includes(key)),
+      productIdNum,
+    );
 
     return {
       message: 'Files uploaded successfully',
@@ -86,18 +94,9 @@ export class ProductImagesController {
     };
   }
 
-  private async deleteExistingProductImages(productId: number): Promise<void> {
+  private async deleteQuietly(keys: string[], productId: number) {
     try {
-      const product = await this.prisma.product.findUnique({
-        where: { id: productId },
-        select: { images: true },
-      });
-
-      if (product?.images && product.images.length > 0) {
-        await Promise.all(
-          product.images.map((key) => this.imageProcessor.delete(key)),
-        );
-      }
+      await Promise.all(keys.map((key) => this.imageProcessor.delete(key)));
     } catch (error) {
       this.logger.warn(
         `Failed to delete existing product images for ${productId}: ${String(error)}`,
