@@ -70,10 +70,12 @@ export class PaymentsService {
     payload: Record<string, unknown>,
     rawBody?: string,
     signature?: string,
+    /** Mercado Pago: `x-request-id` and the notification URL's query, both part of what it signs. */
+    extra: { requestId?: string; query?: Record<string, unknown> } = {},
   ): Promise<string> {
     const data = await this._callTransactions(
-      `mutation ProcessWebhook($provider: ChileanPaymentProvider!, $eventType: String!, $payload: JSON!, $rawBody: String, $signature: String) {
-        processProviderWebhook(provider: $provider, eventType: $eventType, payload: $payload, rawBody: $rawBody, signature: $signature)
+      `mutation ProcessWebhook($provider: ChileanPaymentProvider!, $eventType: String!, $payload: JSON!, $rawBody: String, $signature: String, $requestId: String, $query: JSON) {
+        processProviderWebhook(provider: $provider, eventType: $eventType, payload: $payload, rawBody: $rawBody, signature: $signature, requestId: $requestId, query: $query)
       }`,
       {
         provider,
@@ -81,6 +83,8 @@ export class PaymentsService {
         payload,
         rawBody: rawBody ?? null,
         signature: signature ?? null,
+        requestId: extra.requestId ?? null,
+        query: extra.query ?? null,
       },
     );
     return data['processProviderWebhook'] as string;

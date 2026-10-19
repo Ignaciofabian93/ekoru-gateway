@@ -122,22 +122,31 @@ export class PaymentsController {
   }
 
   /**
-   * MercadoPago's `x-signature` verification is not implemented, so the
-   * subgraph refuses these webhooks outright rather than acting on unverified
-   * events. The provider is not enabled for real sellers; implementing the
-   * HMAC check is a prerequisite for switching it on (EK-1 / SEC-2).
+   * Mercado Pago signs `id:<data.id>;request-id:<x-request-id>;ts:<ts>;` with
+   * EKORU's application secret (TRX-16). The transactions subgraph verifies
+   * it, so the header, the request id and the query (`data.id`, plus our
+   * `ekoru_payment` hint) are forwarded as they came, and then reads the
+   * payment back from Mercado Pago before changing anything.
+   *
+   * Mercado Pago retries every 15 minutes until it gets a 200/201, so a
+   * failure answers 500: a notification lost to a passing error comes back.
    */
   @Post('webhook/mercadopago')
   async mercadoPagoWebhook(
     @Req() req: Request & { rawBody?: string },
+    @Res() res: Response,
     @Headers('x-signature') signature: string,
+    @Headers('x-request-id') requestId: string,
     @Body() body: Record<string, unknown>,
   ) {
     const eventType =
-      (body['type'] as string) ??
+      (body?.['type'] as string) ??
+      (req.query['type'] as string) ??
       (req.query['topic'] as string) ??
       'notification';
-    if (!body || Object.keys(body).length === 0) return { ok: false };
+    if (!body || Object.keys(body).length === 0) {
+      return res.status(400).json({ ok: false });
+    }
     try {
       await this.payments.processWebhook(
         'MERCADOPAGO',
@@ -145,12 +154,13 @@ export class PaymentsController {
         body,
         req.rawBody,
         signature,
+        { requestId, query: req.query as Record<string, unknown> },
       );
     } catch (err) {
       this.logger.warn(`MercadoPago webhook rejected: ${String(err)}`);
-      return { ok: false };
+      return res.status(500).json({ ok: false });
     }
-    return { ok: true };
+    return res.status(200).json({ ok: true });
   }
 
   // ─── Webpay hand-off page ─────────────────────────────────────────────────
