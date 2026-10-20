@@ -21,6 +21,8 @@ import { ImagesModule } from './images/images.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
+import { createThrottlerStorage } from './common/throttler/resilient-throttler.storage';
+import { graphqlMetricsPlugin } from './graphql/error-metrics.plugin';
 import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 
 interface GatewayContext {
@@ -140,13 +142,26 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
       isGlobal: true,
       envFilePath: '.env',
     }),
-    // Rate limiting - 100 requests per minute per IP
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000, // 1 minute in milliseconds
-        limit: 100,
-      },
-    ]),
+    // Rate limiting - 100 requests per minute per IP. Counted in Redis when
+    // THROTTLER_REDIS_HOST is set, so restarts keep the counts (INF-11).
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            ttl: 60000, // 1 minute in milliseconds
+            limit: 100,
+          },
+        ],
+        storage: createThrottlerStorage({
+          host: config.get<string>('THROTTLER_REDIS_HOST'),
+          port: Number(config.get<string>('THROTTLER_REDIS_PORT') ?? 6379),
+          password: config.get<string>('THROTTLER_REDIS_PASSWORD'),
+          db: Number(config.get<string>('THROTTLER_REDIS_DB') ?? 1),
+        }),
+      }),
+    }),
     GraphQLModule.forRootAsync<ApolloGatewayDriverConfig>({
       driver: ApolloGatewayDriver,
       imports: [ConfigModule],
@@ -197,6 +212,8 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
             // including the internal ones, and there is no reason to hand that
             // map out publicly. Staging keeps it for tooling.
             introspection: environment !== 'production',
+            // GraphQL requests and errors by code, for the alerts (INF-5).
+            plugins: [graphqlMetricsPlugin()],
             // Bounds the cost of a single request. See ./graphql/validation-rules.
             validationRules: [
               depthLimit(MAX_DEPTH),
