@@ -19,6 +19,8 @@ export const translations: Record<string, TranslationMap> = {
     'auth.token_refresh_failed': 'No se pudo generar un nuevo token de acceso',
     'auth.token_invalid': 'Token de acceso inválido',
     'auth.token_revoked': 'El token de actualización ha sido revocado',
+    'errors.unexpected':
+      'Ocurrió un error inesperado. Intenta de nuevo en unos minutos. (ref {{ref}})',
   },
   EN: {
     'auth.user_not_found': 'User not found',
@@ -35,5 +37,7 @@ export const translations: Record<string, TranslationMap> = {
     'auth.token_refresh_failed': 'Could not generate a new access token',
     'auth.token_invalid': 'Invalid access token',
     'auth.token_revoked': 'Refresh token has been revoked',
+    'errors.unexpected':
+      'Something went wrong on our side. Please try again in a few minutes. (ref {{ref}})',
   },
 };

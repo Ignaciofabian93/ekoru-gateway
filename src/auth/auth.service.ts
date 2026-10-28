@@ -1,9 +1,11 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { JsonWebTokenError, TokenExpiredError } from 'jsonwebtoken';
 import { ConfigService } from '@nestjs/config';
 import { compare } from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +13,7 @@ import { Response } from 'express';
 import { I18nService } from '../common/i18n';
 import { DEFAULT_LANGUAGE, type SupportedLanguage } from '../i18n/messages';
 import { TokenRepository } from './token.repository';
+import { tokenSubject } from './access-token';
 import {
   NotificationsClient,
   type LoginAlertDetails,
@@ -40,6 +43,9 @@ const DUMMY_HASH =
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  private readonly refreshSecret: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -47,7 +53,32 @@ export class AuthService {
     private readonly i18nService: I18nService,
     private readonly tokenRepository: TokenRepository,
     private readonly notifications: NotificationsClient,
-  ) {}
+  ) {
+    // No default: without its own secret a refresh token would be signed with
+    // the access secret and accepted as a 7-day access token.
+    this.refreshSecret = configService.getOrThrow<string>('JWT_REFRESH_SECRET');
+  }
+
+  /**
+   * The app only ever hears "could not refresh". The log says why: expired,
+   * already used or revoked, bad signature, or a failure on our side that the
+   * app also sees as an invalid token.
+   */
+  private logRefreshFailure(token: string, error: unknown): void {
+    const who = tokenSubject(token);
+    if (error instanceof TokenExpiredError) {
+      this.logger.warn(
+        `Refresh refused for ${who}: refresh token expired at ${error.expiredAt.toISOString()}`,
+      );
+    } else if (error instanceof JsonWebTokenError) {
+      this.logger.warn(`Refresh refused for ${who}: ${error.message}`);
+    } else {
+      this.logger.error(
+        `Refresh failed for ${who} and was answered as an invalid token`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
 
   private setCookies(res: Response, token: string, refreshToken: string) {
     const environment = this.configService.get<string>(
@@ -101,7 +132,7 @@ export class AuthService {
 
   private signRefreshToken(payload: Record<string, string>): string {
     return this.jwtService.sign(payload, {
-      secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+      secret: this.refreshSecret,
       expiresIn: '7d',
     });
   }
@@ -290,6 +321,9 @@ export class AuthService {
     language: SupportedLanguage = DEFAULT_LANGUAGE,
   ) {
     if (!refreshToken) {
+      this.logger.warn(
+        'Refresh refused: no refresh token in the body or cookie',
+      );
       throw new UnauthorizedException(
         this.i18nService.translate('auth.token_refresh_failed', language),
       );
@@ -298,11 +332,14 @@ export class AuthService {
     try {
       const payload: { sellerId: string } = this.jwtService.verify(
         refreshToken,
-        { secret: this.configService.get<string>('JWT_REFRESH_SECRET') },
+        { secret: this.refreshSecret },
       );
 
       const revoked = await this.tokenRepository.isRevoked(refreshToken);
       if (revoked) {
+        this.logger.warn(
+          `Refresh refused for ${tokenSubject(refreshToken)}: the refresh token was already used or revoked (a second refresh with the same token, or one after logout)`,
+        );
         throw new UnauthorizedException(
           this.i18nService.translate('auth.token_revoked', language),
         );
@@ -328,10 +365,12 @@ export class AuthService {
       );
 
       this.setCookies(res, newToken, newRefreshToken);
+      this.logger.log(`Refreshed the session of seller ${payload.sellerId}`);
 
       return { token: newToken, refreshToken: newRefreshToken, success: true };
     } catch (error) {
       if (error instanceof UnauthorizedException) throw error;
+      this.logRefreshFailure(refreshToken, error);
       throw new UnauthorizedException(
         this.i18nService.translate('auth.token_invalid', language),
       );
@@ -344,6 +383,9 @@ export class AuthService {
     language: SupportedLanguage = DEFAULT_LANGUAGE,
   ) {
     if (!refreshToken) {
+      this.logger.warn(
+        'Refresh refused: no refresh token in the body or cookie',
+      );
       throw new UnauthorizedException(
         this.i18nService.translate('auth.token_refresh_failed', language),
       );
@@ -352,11 +394,14 @@ export class AuthService {
     try {
       const payload: { adminId: string } = this.jwtService.verify(
         refreshToken,
-        { secret: this.configService.get<string>('JWT_REFRESH_SECRET') },
+        { secret: this.refreshSecret },
       );
 
       const revoked = await this.tokenRepository.isRevoked(refreshToken);
       if (revoked) {
+        this.logger.warn(
+          `Refresh refused for ${tokenSubject(refreshToken)}: the refresh token was already used or revoked (a second refresh with the same token, or one after logout)`,
+        );
         throw new UnauthorizedException(
           this.i18nService.translate('auth.token_revoked', language),
         );
@@ -381,6 +426,9 @@ export class AuthService {
       });
 
       if (!admin || !admin.isActive || admin.accountLocked) {
+        this.logger.warn(
+          `Refresh refused for admin ${payload.adminId}: ${admin ? 'inactive or locked' : 'no such admin'}`,
+        );
         throw new UnauthorizedException(
           this.i18nService.translate('auth.account_disabled', language),
         );
@@ -408,10 +456,12 @@ export class AuthService {
       );
 
       this.setCookies(res, newToken, newRefreshToken);
+      this.logger.log(`Refreshed the session of admin ${admin.id}`);
 
       return { token: newToken, refreshToken: newRefreshToken, success: true };
     } catch (error) {
       if (error instanceof UnauthorizedException) throw error;
+      this.logRefreshFailure(refreshToken, error);
       throw new UnauthorizedException(
         this.i18nService.translate('auth.token_invalid', language),
       );
@@ -435,7 +485,7 @@ export class AuthService {
     try {
       const refreshDecoded: { sellerId: string } = this.jwtService.verify(
         token,
-        { secret: this.configService.get<string>('JWT_REFRESH_SECRET') },
+        { secret: this.refreshSecret },
       );
       return refreshDecoded;
     } catch (error) {

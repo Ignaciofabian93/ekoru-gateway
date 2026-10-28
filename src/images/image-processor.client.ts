@@ -1,9 +1,16 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+
+/** The image processor's answers that mean "this image", not "our side". */
+const IMAGE_REFUSED = new Set([400, 413, 422]);
+
+const SAVE_FAILED =
+  'The image could not be saved. Please try again in a few minutes.';
 
 export type ImageEntity =
   | 'user_avatar'
@@ -47,20 +54,36 @@ export class ImageProcessorClient {
     form.append('entity', entity);
     form.append('entity_id', entityId);
 
-    const res = await fetch(`${this.baseUrl}/process`, {
-      method: 'POST',
-      headers: { 'X-Internal-Token': this.token },
-      body: form,
-    });
+    // The log names the upload; the app only learns whether to try another
+    // image (the image was refused) or to try again later (our side failed).
+    const upload = `${entity} ${entityId}, ${file.mimetype} ${file.size} bytes`;
+
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/process`, {
+        method: 'POST',
+        headers: { 'X-Internal-Token': this.token },
+        body: form,
+      });
+    } catch (error) {
+      this.logger.error(
+        `image-processor /process unreachable for ${upload}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException(SAVE_FAILED);
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       this.logger.error(
-        `image-processor /process ${res.status}: ${text || '(no body)'}`,
+        `image-processor /process ${res.status} for ${upload}: ${text || '(no body)'}`,
       );
-      throw new InternalServerErrorException(
-        `image-processor returned ${res.status}`,
-      );
+      if (IMAGE_REFUSED.has(res.status)) {
+        throw new BadRequestException(
+          'The image could not be processed. Try a JPG, PNG or WebP image under 10 MB.',
+        );
+      }
+      throw new InternalServerErrorException(SAVE_FAILED);
     }
 
     return (await res.json()) as ProcessedImage;

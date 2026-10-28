@@ -9,6 +9,7 @@ import {
 } from '@apollo/gateway';
 import { verify } from 'jsonwebtoken';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { type AccessTokenCheck, checkAccessToken } from './auth/access-token';
 import { APP_GUARD } from '@nestjs/core';
 import depthLimit from 'graphql-depth-limit';
 import {
@@ -23,6 +24,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
 import { createThrottlerStorage } from './common/throttler/resilient-throttler.storage';
 import { graphqlMetricsPlugin } from './graphql/error-metrics.plugin';
+import { graphqlErrorReportingPlugin } from './graphql/error-reporting.plugin';
 import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 
 interface GatewayContext {
@@ -34,6 +36,8 @@ interface GatewayContext {
   adminSellerId?: string;
   /** Visitor IP as seen through nginx; subgraphs rate-limit on it. */
   clientIp?: string;
+  /** Why the request is, or is not, signed in. For the error log. */
+  auth?: AccessTokenCheck;
   extensions?: {
     sellerId?: string;
     adminId?: string;
@@ -196,7 +200,7 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
         // Only the access-token secret is needed here. `JWT_REFRESH_SECRET`
         // is used exclusively by AuthService on the `/session/*` routes, which
         // is the only place a refresh token is now accepted.
-        const jwtSecret = configService.get<string>('JWT_SECRET') || '';
+        const jwtSecret = configService.getOrThrow<string>('JWT_SECRET');
 
         return {
           gateway: {
@@ -212,8 +216,9 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
             // including the internal ones, and there is no reason to hand that
             // map out publicly. Staging keeps it for tooling.
             introspection: environment !== 'production',
-            // GraphQL requests and errors by code, for the alerts (INF-5).
-            plugins: [graphqlMetricsPlugin()],
+            // GraphQL requests and errors by code, for the alerts (INF-5),
+            // and every error logged in full but sent to the app generic.
+            plugins: [graphqlMetricsPlugin(), graphqlErrorReportingPlugin()],
             // Bounds the cost of a single request. See ./graphql/validation-rules.
             validationRules: [
               depthLimit(MAX_DEPTH),
@@ -236,37 +241,27 @@ class AuthenticatedDataSource extends RemoteGraphQLDataSource {
                 req.headers?.authorization?.split(' ')[1] ||
                 '';
 
-              type AccessClaims = {
-                sellerId?: string;
-                adminId?: string;
-                adminRole?: string;
-                adminType?: string;
-                adminSellerId?: string | null;
-              };
-
-              let token = '';
-              let decoded: AccessClaims | null = null;
-
-              if (accessToken) {
-                try {
-                  decoded = verify(accessToken, jwtSecret) as AccessClaims;
-                  token = accessToken;
-                } catch {
-                  // Expired or invalid: the request continues unauthenticated
-                  // and resolvers reject it. The client refreshes and retries.
-                }
-              }
+              // Expired or invalid: the request continues unauthenticated and
+              // resolvers reject it. The client refreshes and retries. `auth`
+              // keeps the reason for the error log.
+              const auth = checkAccessToken(
+                accessToken,
+                jwtSecret,
+                Boolean(req.cookies?.refreshToken),
+              );
+              const decoded = auth.status === 'valid' ? auth.claims : null;
 
               return {
                 req,
                 res,
-                token,
+                token: decoded ? accessToken : '',
                 sellerId: decoded?.sellerId,
                 adminId: decoded?.adminId,
                 adminRole: decoded?.adminRole,
                 adminType: decoded?.adminType,
                 adminSellerId: decoded?.adminSellerId ?? undefined,
                 clientIp: req.ip,
+                auth,
               } as GatewayContext & { req: any; res: any };
               /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
             },

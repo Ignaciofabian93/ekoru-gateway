@@ -90,6 +90,10 @@ describe('AuthService', () => {
               };
               return config[key] || defaultValue;
             }),
+            getOrThrow: jest.fn((key: string) => {
+              if (key !== 'JWT_REFRESH_SECRET') throw new Error(`${key} unset`);
+              return 'test-refresh-secret';
+            }),
           },
         },
         {
