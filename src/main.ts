@@ -86,6 +86,9 @@ async function bootstrap() {
   });
   app.useBodyParser('urlencoded', { limit: '20mb', extended: true });
 
+  // On `docker stop`, finish the requests and jobs in progress, then exit.
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
+
   await app.listen(port);
 
   console.log(`Gateway running on port: ${port}`);
