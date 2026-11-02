@@ -1,16 +1,43 @@
 import {
-  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-
-/** The image processor's answers that mean "this image", not "our side". */
-const IMAGE_REFUSED = new Set([400, 413, 422]);
+import { imageRefused, type ImageRefusal } from './upload-security';
 
 const SAVE_FAILED =
   'The image could not be saved. Please try again in a few minutes.';
+
+const REFUSED: Record<ImageRefusal, string> = {
+  IMAGE_FORMAT:
+    'This image format is not supported. Use a JPEG, PNG or WebP image.',
+  IMAGE_TOO_HEAVY: 'The image is larger than 10 MB.',
+  IMAGE_TOO_LARGE: 'The image is too large: at most 10,000 pixels per side.',
+  IMAGE_UNREADABLE: 'The image could not be read; it may be damaged.',
+};
+
+/** How the `image` crate words a format it has no decoder for. */
+const UNSUPPORTED =
+  /could not be determined|not supported|does not support|not recognized/i;
+
+/**
+ * Reads the processor's answers that mean "this image", not "our side": 413
+ * over its byte limit, 400 over its pixel limits ("image too large") or a
+ * malformed upload, 422 a file it could not decode. Null for anything else.
+ */
+export function refusalOf(status: number, body: string): ImageRefusal | null {
+  if (status === 413) return 'IMAGE_TOO_HEAVY';
+  if (status === 400) {
+    return body.includes('image too large')
+      ? 'IMAGE_TOO_LARGE'
+      : 'IMAGE_UNREADABLE';
+  }
+  if (status === 422) {
+    return UNSUPPORTED.test(body) ? 'IMAGE_FORMAT' : 'IMAGE_UNREADABLE';
+  }
+  return null;
+}
 
 export type ImageEntity =
   | 'user_avatar'
@@ -78,11 +105,8 @@ export class ImageProcessorClient {
       this.logger.error(
         `image-processor /process ${res.status} for ${upload}: ${text || '(no body)'}`,
       );
-      if (IMAGE_REFUSED.has(res.status)) {
-        throw new BadRequestException(
-          'The image could not be processed. Try a JPG, PNG or WebP image under 10 MB.',
-        );
-      }
+      const refusal = refusalOf(res.status, text);
+      if (refusal) throw imageRefused(refusal, REFUSED[refusal]);
       throw new InternalServerErrorException(SAVE_FAILED);
     }
 

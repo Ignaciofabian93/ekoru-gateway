@@ -13,7 +13,7 @@ import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImageProcessorClient } from './image-processor.client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { assertRealImage } from './upload-security';
+import { assertRealImage, imageRefused } from './upload-security';
 
 // Narrower than the shared filter on purpose: covers are rendered large, so
 // only the three formats the processor handles well are offered. The declared
@@ -28,7 +28,10 @@ const imageFileFilter = (
     cb(null, true);
   } else {
     cb(
-      new BadRequestException('Only JPEG, PNG, and WebP images are allowed!'),
+      imageRefused(
+        'IMAGE_FORMAT',
+        'Only JPEG, PNG and WebP images are allowed',
+      ),
       false,
     );
   }

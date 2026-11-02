@@ -14,6 +14,32 @@ import type { PrismaService } from '../prisma/prisma.service';
  */
 
 /**
+ * Why an image was refused. The message stays in English for logs; the apps
+ * read `code` and tell the person what to change, in their language.
+ * - IMAGE_FORMAT: a format the processor cannot decode (HEIC, AVIF, PDF…).
+ * - IMAGE_TOO_HEAVY: over the byte limit.
+ * - IMAGE_TOO_LARGE: over the processor's pixel limits.
+ * - IMAGE_UNREADABLE: a supported format, but damaged or truncated.
+ */
+export type ImageRefusal =
+  | 'IMAGE_FORMAT'
+  | 'IMAGE_TOO_HEAVY'
+  | 'IMAGE_TOO_LARGE'
+  | 'IMAGE_UNREADABLE';
+
+export function imageRefused(
+  code: ImageRefusal,
+  message: string,
+): BadRequestException {
+  return new BadRequestException({
+    statusCode: 400,
+    error: 'Bad Request',
+    code,
+    message,
+  });
+}
+
+/**
  * Multer's `fileFilter` runs before the body is buffered, so `file.buffer` is
  * not available there and only the declared mimetype can be seen — which the
  * client chooses. Keep this as a cheap first pass and rely on
@@ -27,11 +53,20 @@ export const declaredImageFilter = (
   if (file.mimetype.startsWith('image/')) {
     cb(null, true);
   } else {
-    cb(new BadRequestException('Only image files are allowed'), false);
+    cb(imageRefused('IMAGE_FORMAT', 'Only image files are allowed'), false);
   }
 };
 
-/** Byte signatures for the formats the image processor accepts. */
+/**
+ * HEIC (iPhone and some Android cameras) and AVIF share the ISO-BMFF `ftyp`
+ * box at offset 4. The processor decodes neither (no HEIC decoder, and AVIF
+ * needs the `avif-native` feature), so they are refused here by name rather
+ * than failing in the processor.
+ */
+const isHeicOrAvif = (b: Buffer) =>
+  b.subarray(4, 8).toString('ascii') === 'ftyp';
+
+/** Byte signatures for the formats the image processor decodes. */
 const SIGNATURES: { name: string; test: (b: Buffer) => boolean }[] = [
   {
     name: 'jpeg',
@@ -59,11 +94,6 @@ const SIGNATURES: { name: string; test: (b: Buffer) => boolean }[] = [
       b.subarray(0, 4).toString('ascii') === 'RIFF' &&
       b.subarray(8, 12).toString('ascii') === 'WEBP',
   },
-  {
-    // AVIF / HEIC share the ISO-BMFF `ftyp` box at offset 4.
-    name: 'avif/heic',
-    test: (b) => b.subarray(4, 8).toString('ascii') === 'ftyp',
-  },
 ];
 
 /**
@@ -72,11 +102,21 @@ const SIGNATURES: { name: string; test: (b: Buffer) => boolean }[] = [
  */
 export function assertRealImage(file: Express.Multer.File): void {
   if (!file?.buffer || file.buffer.length < 12) {
-    throw new BadRequestException('Uploaded file is empty or truncated');
+    throw imageRefused(
+      'IMAGE_UNREADABLE',
+      'Uploaded file is empty or truncated',
+    );
+  }
+  if (isHeicOrAvif(file.buffer)) {
+    throw imageRefused(
+      'IMAGE_FORMAT',
+      'HEIC and AVIF images are not supported; use JPEG, PNG or WebP',
+    );
   }
   if (!SIGNATURES.some((sig) => sig.test(file.buffer))) {
-    throw new BadRequestException(
-      'File content is not a recognised image (JPEG, PNG, GIF, WebP, AVIF/HEIC)',
+    throw imageRefused(
+      'IMAGE_FORMAT',
+      'File content is not a recognised image (JPEG, PNG, GIF or WebP)',
     );
   }
 }
