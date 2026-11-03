@@ -80,6 +80,12 @@ export class AuthService {
     }
   }
 
+  /**
+   * `lax`, not `strict`, in every environment: a strict cookie is withheld on
+   * any arrival from another site, so a buyer returning from Mercado Pago, or
+   * anyone opening an EKORU link from an email or a chat, landed signed out.
+   * Lax still keeps the cookies off cross-site POSTs, which is what CSRF needs.
+   */
   private setCookies(res: Response, token: string, refreshToken: string) {
     const environment = this.configService.get<string>(
       'ENVIRONMENT',
@@ -91,7 +97,7 @@ export class AuthService {
     res.cookie('token', token, {
       httpOnly: true,
       secure: isSecure,
-      sameSite: isSecure ? 'strict' : 'lax',
+      sameSite: 'lax',
       maxAge: 15 * 60 * 1000,
       domain,
     });
@@ -99,7 +105,7 @@ export class AuthService {
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
       secure: isSecure,
-      sameSite: isSecure ? 'strict' : 'lax',
+      sameSite: 'lax',
       maxAge: REFRESH_TOKEN_TTL_MS,
       domain,
     });
@@ -509,14 +515,14 @@ export class AuthService {
     res.clearCookie('token', {
       httpOnly: true,
       secure: isSecure,
-      sameSite: isSecure ? 'strict' : 'lax',
+      sameSite: 'lax',
       domain,
     });
 
     res.clearCookie('refreshToken', {
       httpOnly: true,
       secure: isSecure,
-      sameSite: isSecure ? 'strict' : 'lax',
+      sameSite: 'lax',
       domain,
     });
 

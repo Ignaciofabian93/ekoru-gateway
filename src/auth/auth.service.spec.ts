@@ -415,7 +415,8 @@ describe('AuthService', () => {
         expect.objectContaining({
           httpOnly: true,
           secure: true,
-          sameSite: 'strict',
+          // Lax so a return from Mercado Pago or an emailed link stays signed in.
+          sameSite: 'lax',
           domain: '.ekoru.cl',
         }),
       );
