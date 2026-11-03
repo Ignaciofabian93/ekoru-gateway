@@ -15,6 +15,10 @@ import { DEFAULT_LANGUAGE, type SupportedLanguage } from '../i18n/messages';
 import { TokenRepository } from './token.repository';
 import { tokenSubject } from './access-token';
 import {
+  businessPanelRefusal,
+  PANEL_REFUSAL_MESSAGE,
+} from './business-panel-access';
+import {
   NotificationsClient,
   type LoginAlertDetails,
 } from '../mail/notifications.client';
@@ -284,6 +288,18 @@ export class AuthService {
       );
     }
 
+    // A business admin needs a plan that includes the panel, and a free seat
+    // in it (USR-15). Asked only after the password, so it reveals nothing to
+    // a stranger.
+    if (admin.adminType === 'BUSINESS') {
+      const refusal = await businessPanelRefusal(this.prisma, admin);
+      if (refusal) {
+        throw new BadRequestException(
+          this.i18nService.translate(PANEL_REFUSAL_MESSAGE[refusal], language),
+        );
+      }
+    }
+
     await this.prisma.admin.update({
       where: { id: admin.id },
       data: { loginAttempts: 0, lastLoginAt: new Date() },
@@ -438,6 +454,21 @@ export class AuthService {
         throw new UnauthorizedException(
           this.i18nService.translate('auth.account_disabled', language),
         );
+      }
+
+      if (admin.adminType === 'BUSINESS') {
+        const refusal = await businessPanelRefusal(this.prisma, admin);
+        if (refusal) {
+          this.logger.warn(
+            `Refresh refused for admin ${admin.id}: ${refusal === 'no-seat' ? 'no free seat in its business panel' : "its business's plan has no panel"}`,
+          );
+          throw new UnauthorizedException(
+            this.i18nService.translate(
+              PANEL_REFUSAL_MESSAGE[refusal],
+              language,
+            ),
+          );
+        }
       }
 
       const newToken = this.jwtService.sign(

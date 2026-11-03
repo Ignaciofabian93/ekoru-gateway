@@ -166,6 +166,14 @@ enum ServicePricing {
   PACKAGE
 }
 
+enum BusinessSubscriptionPlan {
+  FREEMIUM
+  STARTUP
+  BASIC
+  ADVANCED
+  EXPERT
+}
+
 // ─── Models ──────────────────────────────────────────────────────────────────────
 
 model Seller {
@@ -202,6 +210,7 @@ model Seller {
   product                                Product[]
   service                                Service[]
   storeProduct                           StoreProduct[]
+  businessMembershipSubscription         BusinessMembershipSubscription[]
 
   @@index([cityId])
   @@index([email])
@@ -290,6 +299,7 @@ model BusinessProfile {
   createdAt                        DateTime                        @default(now())
   updatedAt                        DateTime                        @updatedAt
   businessMembershipSubscriptionId Int?
+  businessMembershipSubscription   BusinessMembershipSubscription? @relation(fields: [businessMembershipSubscriptionId], references: [id])
   seller                           Seller                          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 
   // Onboarding review. A new business starts PENDING and cannot sign in until
@@ -484,5 +494,45 @@ model RefreshToken {
 
   @@index([userId])
   @@index([isRevoked])
+}
+
+model BusinessMembership {
+  id             Int                              @id @default(autoincrement())
+  membershipType BusinessSubscriptionPlan         @default(FREEMIUM)
+  durationMonths Int
+  isActive       Boolean                          @default(true)
+  createdAt      DateTime                         @default(now())
+  updatedAt      DateTime                         @updatedAt
+  subscriptions  BusinessMembershipSubscription[]
+
+  @@index([membershipType])
+  @@index([isActive])
+}
+
+model BusinessMembershipSubscription {
+  id                   Int                @id @default(autoincrement())
+  sellerId             String
+  businessMembershipId Int
+  startDate            DateTime           @default(now())
+  endDate              DateTime?
+  isActive             Boolean            @default(true)
+  autoRenew            Boolean            @default(false)
+  paymentId            Int?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  businessMembership   BusinessMembership @relation(fields: [businessMembershipId], references: [id])
+  seller               Seller             @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  businessProfiles     BusinessProfile[]
+
+  @@index([sellerId])
+  @@index([businessMembershipId])
+  @@index([isActive])
+  @@index([endDate])
+}
+
+model BusinessPlanRule {
+  plan       BusinessSubscriptionPlan @id
+  panelSeats Int                      @default(0)
+  updatedAt  DateTime                 @updatedAt
 }
 
