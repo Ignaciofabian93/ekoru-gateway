@@ -10,6 +10,8 @@ export const translations: Record<string, TranslationMap> = {
     'auth.invalid_credentials': 'Credenciales inválidas',
     'auth.account_disabled': 'La cuenta está desactivada',
     'auth.account_locked': 'La cuenta está bloqueada',
+    'auth.account_suspended':
+      'Tu cuenta está suspendida. Escríbenos a contacto@ekoru.cl si crees que es un error.',
     'auth.account_pending':
       'Tu cuenta está en revisión. Te avisaremos por correo cuando EKORU la apruebe.',
     'auth.account_rejected':
@@ -32,6 +34,8 @@ export const translations: Record<string, TranslationMap> = {
     'auth.invalid_credentials': 'Invalid credentials',
     'auth.account_disabled': 'Account is disabled',
     'auth.account_locked': 'Account is locked',
+    'auth.account_suspended':
+      'Your account is suspended. Write to contacto@ekoru.cl if you think this is a mistake.',
     'auth.account_pending':
       "Your account is under review. We'll email you once EKORU approves it.",
     'auth.account_rejected':

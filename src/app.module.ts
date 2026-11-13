@@ -2,14 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloGatewayDriver, ApolloGatewayDriverConfig } from '@nestjs/apollo';
-import {
-  IntrospectAndCompose,
-  RemoteGraphQLDataSource,
-  GraphQLDataSourceProcessOptions,
-} from '@apollo/gateway';
-import { verify } from 'jsonwebtoken';
+import { IntrospectAndCompose } from '@apollo/gateway';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { type AccessTokenCheck, checkAccessToken } from './auth/access-token';
+import { checkAccessToken } from './auth/access-token';
 import { APP_GUARD } from '@nestjs/core';
 import depthLimit from 'graphql-depth-limit';
 import {
@@ -23,116 +18,13 @@ import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
 import { createThrottlerStorage } from './common/throttler/resilient-throttler.storage';
+import {
+  AuthenticatedDataSource,
+  type GatewayContext,
+} from './graphql/authenticated-data-source';
 import { graphqlMetricsPlugin } from './graphql/error-metrics.plugin';
 import { graphqlErrorReportingPlugin } from './graphql/error-reporting.plugin';
 import { PrometheusModule } from '@willsoto/nestjs-prometheus';
-
-interface GatewayContext {
-  token?: string;
-  sellerId?: string;
-  adminId?: string;
-  adminRole?: string;
-  adminType?: string;
-  adminSellerId?: string;
-  /** Visitor IP as seen through nginx; subgraphs rate-limit on it. */
-  clientIp?: string;
-  /** Why the request is, or is not, signed in. For the error log. */
-  auth?: AccessTokenCheck;
-  extensions?: {
-    sellerId?: string;
-    adminId?: string;
-  };
-}
-
-// Custom DataSource to propagate auth headers to subgraphs
-class AuthenticatedDataSource extends RemoteGraphQLDataSource {
-  constructor(
-    config: { url: string },
-    private readonly jwtSecret: string,
-  ) {
-    super(config);
-  }
-
-  willSendRequest(
-    options: GraphQLDataSourceProcessOptions<Record<string, any>>,
-  ) {
-    const { request, context } = options;
-    if (!request.http) return;
-
-    const gatewayContext = context as GatewayContext;
-    // Only forward token if it's valid
-    if (gatewayContext?.token) {
-      const isValid = this.validateToken(gatewayContext.token);
-      if (isValid) {
-        request.http.headers.set(
-          'Authorization',
-          `Bearer ${gatewayContext.token}`,
-        );
-      }
-    }
-
-    // Subgraphs only ever see the gateway's address, so per-visitor rate
-    // limits need the real client IP. Always overwrite: a client-supplied
-    // value must never reach a subgraph.
-    request.http.headers.set('x-client-ip', gatewayContext?.clientIp ?? '');
-
-    const sellerId =
-      gatewayContext?.sellerId || gatewayContext?.extensions?.sellerId;
-    if (sellerId) {
-      request.http.headers.set('x-seller-id', sellerId);
-    }
-
-    const adminId =
-      gatewayContext?.adminId || gatewayContext?.extensions?.adminId;
-    if (adminId) {
-      request.http.headers.set('x-admin-id', adminId);
-      // Authorization inputs, not just identity: subgraphs need the role to
-      // decide *what* this admin may do, and the type/seller pair to keep a
-      // BUSINESS admin inside their own data.
-      if (gatewayContext.adminRole) {
-        request.http.headers.set('x-admin-role', gatewayContext.adminRole);
-      }
-      if (gatewayContext.adminType) {
-        request.http.headers.set('x-admin-type', gatewayContext.adminType);
-      }
-      if (gatewayContext.adminSellerId) {
-        request.http.headers.set(
-          'x-admin-seller-id',
-          gatewayContext.adminSellerId,
-        );
-      }
-    }
-
-    // NOTE: `x-internal-secret` is deliberately NOT set here.
-    //
-    // It used to be attached to every federated request, which meant any
-    // public caller — including an anonymous one — arrived at the subgraphs
-    // already holding the credential that marks a request as internal. Since
-    // the subgraph guards trust that header, every "internal only" mutation
-    // (setProductAvailability, processProviderWebhook, awardPoints,
-    // activateMembershipSubscription, …) was reachable straight through this
-    // gateway without any authentication at all.
-    //
-    // Internal mutations are called service-to-service, never through
-    // federation: the gateway's own PaymentsService, and the transactions
-    // subgraph's MarketplaceClient / UsersClient, each set the header on their
-    // direct HTTP call. Nothing legitimate needs it on this path.
-  }
-
-  /**
-   * Access-token secret only. Accepting the refresh secret here would let a
-   * refresh token be forwarded to the subgraphs as a bearer credential, which
-   * is the same 7-day-session problem the context factory now avoids.
-   */
-  private validateToken(token: string): boolean {
-    try {
-      verify(token, this.jwtSecret);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
 
 @Module({
   imports: [

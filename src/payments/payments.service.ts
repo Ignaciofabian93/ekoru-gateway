@@ -1,5 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithTimeout } from '../common/fetch-with-timeout';
+
+/**
+ * Longer than the usual 10 seconds: confirming a return or a webhook makes the
+ * transactions subgraph read the payment back from Mercado Pago first.
+ */
+const TRANSACTIONS_TIMEOUT_MS = 20_000;
 
 type ProviderId = 'WEBPAY' | 'KHIPU' | 'MERCADOPAGO';
 
@@ -109,16 +116,20 @@ export class PaymentsService {
     variables: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const url = this._transactionsUrl();
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // Header form of the internal secret — the transactions GraphQL
-        // context will pick it up so we don't have to repeat it as a field.
-        'x-internal-secret': this._internalSecret(),
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Header form of the internal secret — the transactions GraphQL
+          // context will pick it up so we don't have to repeat it as a field.
+          'x-internal-secret': this._internalSecret(),
+        },
+        body: JSON.stringify({ query, variables }),
       },
-      body: JSON.stringify({ query, variables }),
-    });
+      TRANSACTIONS_TIMEOUT_MS,
+    );
     if (!res.ok) {
       this.logger.error(
         `Transactions subgraph ${res.status}: ${await res.text()}`,

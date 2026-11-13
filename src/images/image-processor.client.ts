@@ -4,7 +4,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithTimeout } from '../common/fetch-with-timeout';
 import { imageRefused, type ImageRefusal } from './upload-security';
+
+/** A 10 MB photo is decoded, resized, encoded and written to R2 in this time. */
+const UPLOAD_TIMEOUT_MS = 30_000;
 
 const SAVE_FAILED =
   'The image could not be saved. Please try again in a few minutes.';
@@ -87,11 +91,15 @@ export class ImageProcessorClient {
 
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}/process`, {
-        method: 'POST',
-        headers: { 'X-Internal-Token': this.token },
-        body: form,
-      });
+      res = await fetchWithTimeout(
+        `${this.baseUrl}/process`,
+        {
+          method: 'POST',
+          headers: { 'X-Internal-Token': this.token },
+          body: form,
+        },
+        UPLOAD_TIMEOUT_MS,
+      );
     } catch (error) {
       this.logger.error(
         `image-processor /process unreachable for ${upload}`,
@@ -116,7 +124,7 @@ export class ImageProcessorClient {
   async delete(key: string): Promise<void> {
     if (!key) return;
     const encoded = key.split('/').map(encodeURIComponent).join('/');
-    const res = await fetch(`${this.baseUrl}/objects/${encoded}`, {
+    const res = await fetchWithTimeout(`${this.baseUrl}/objects/${encoded}`, {
       method: 'DELETE',
       headers: { 'X-Internal-Token': this.token },
     });

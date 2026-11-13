@@ -45,6 +45,13 @@ const LOCKOUT_MS = 15 * 60 * 1000;
 const DUMMY_HASH =
   '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
 
+/**
+ * The address ekoru-users leaves on a deleted account (`deleteAccount` there
+ * anonymises the row instead of removing it). Such a seller has no way in by
+ * password; this closes the sessions that were open when it was deleted.
+ */
+const DELETED_EMAIL_SUFFIX = '@deleted.ekoru';
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -140,6 +147,50 @@ export class AuthService {
     });
   }
 
+  /**
+   * The admin's version of `registerFailedLogin` (GW-5): the same 8 attempts
+   * and 15 minutes. The count was always kept, but nothing acted on it, so
+   * guessing against a panel account never stopped.
+   */
+  private async registerFailedAdminLogin(
+    adminId: string,
+    currentAttempts: number,
+  ): Promise<void> {
+    const attempts = currentAttempts + 1;
+    await this.prisma.admin.update({
+      where: { id: adminId },
+      data: {
+        loginAttempts: attempts,
+        lockedUntil:
+          attempts >= MAX_LOGIN_ATTEMPTS
+            ? new Date(Date.now() + LOCKOUT_MS)
+            : null,
+      },
+    });
+  }
+
+  /**
+   * Whether a ban is in force for the seller (USR-17): an active BannedSeller
+   * row that has no end date or hasn't reached it. `Seller.isActive` can't
+   * answer this, because a seller who paused their own account has it false
+   * too and must still be able to sign in and resume it.
+   *
+   * It throws when the table can't be read, so a missing grant for
+   * `ekoru_gateway` (`npm run db-roles:apply`) stops sign-in loudly instead of
+   * letting banned sellers through.
+   */
+  private async hasActiveBan(sellerId: string): Promise<boolean> {
+    const ban = await this.prisma.bannedSeller.findFirst({
+      where: {
+        sellerId,
+        isActive: true,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+      select: { id: true },
+    });
+    return ban !== null;
+  }
+
   private signRefreshToken(payload: Record<string, string>): string {
     return this.jwtService.sign(payload, {
       secret: this.refreshSecret,
@@ -187,6 +238,16 @@ export class AuthService {
     if (!valid) {
       await this.registerFailedLogin(user.id, user.loginAttempts);
       throw rejectCredentials();
+    }
+
+    // A banned seller stays out (USR-17). The ban revoked their sessions, but
+    // nothing stopped them signing in again with the same password. Asked
+    // after the password, so only the account's owner learns of the ban.
+    if (await this.hasActiveBan(user.id)) {
+      this.logger.warn(`Sign-in refused for seller ${user.id}: banned`);
+      throw new BadRequestException(
+        this.i18nService.translate('auth.account_suspended', language),
+      );
     }
 
     // A business signs in only once EKORU has reviewed and approved it, so
@@ -259,12 +320,34 @@ export class AuthService {
       where: { email: formattedEmail },
     });
 
+    // One answer for an unknown address and a wrong password, as for sellers
+    // (GW-5). "Admin not found" told anyone which addresses are panel accounts.
+    const rejectCredentials = () =>
+      new BadRequestException(
+        this.i18nService.translate('auth.invalid_credentials', language),
+      );
+
     if (!admin) {
+      // Spend the time a real compare would, so timing doesn't tell either.
+      await compare(password, DUMMY_HASH);
+      throw rejectCredentials();
+    }
+
+    // The timed lock, set by wrong passwords, is checked before the password:
+    // while it lasts, not even the right one is tried.
+    if (admin.lockedUntil && admin.lockedUntil > new Date()) {
       throw new BadRequestException(
-        this.i18nService.translate('auth.admin_not_found', language),
+        this.i18nService.translate('auth.account_locked', language),
       );
     }
 
+    const valid = await compare(password, admin.password);
+    if (!valid) {
+      await this.registerFailedAdminLogin(admin.id, admin.loginAttempts);
+      throw rejectCredentials();
+    }
+
+    // Disabled, or locked by hand: said only to whoever knows the password.
     if (!admin.isActive) {
       throw new BadRequestException(
         this.i18nService.translate('auth.account_disabled', language),
@@ -274,17 +357,6 @@ export class AuthService {
     if (admin.accountLocked) {
       throw new BadRequestException(
         this.i18nService.translate('auth.account_locked', language),
-      );
-    }
-
-    const valid = await compare(password, admin.password);
-    if (!valid) {
-      await this.prisma.admin.update({
-        where: { id: admin.id },
-        data: { loginAttempts: { increment: 1 } },
-      });
-      throw new BadRequestException(
-        this.i18nService.translate('auth.invalid_credentials', language),
       );
     }
 
@@ -300,9 +372,10 @@ export class AuthService {
       }
     }
 
+    // A good sign-in clears the counter and any lock that has run out.
     await this.prisma.admin.update({
       where: { id: admin.id },
-      data: { loginAttempts: 0, lastLoginAt: new Date() },
+      data: { loginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
     });
 
     // Role, type and business scope travel in the token so the subgraphs can
@@ -369,6 +442,29 @@ export class AuthService {
 
       // Rotate: revoke the used token and issue a new pair
       await this.tokenRepository.revoke(refreshToken);
+
+      // Re-read the seller instead of trusting a token signed up to 7 days
+      // ago (USR-17). This is where a ban or a deleted account ends a session
+      // that was open at the time; the used token is already revoked above,
+      // so a refusal here leaves nothing to try again with.
+      const seller = await this.prisma.seller.findUnique({
+        where: { id: payload.sellerId },
+        select: { id: true, email: true },
+      });
+      const gone = !seller || seller.email.endsWith(DELETED_EMAIL_SUFFIX);
+      if (gone || (await this.hasActiveBan(seller.id))) {
+        this.logger.warn(
+          `Refresh refused for seller ${payload.sellerId}: ${
+            !seller ? 'no such seller' : gone ? 'account deleted' : 'banned'
+          }`,
+        );
+        throw new UnauthorizedException(
+          this.i18nService.translate(
+            gone ? 'auth.account_disabled' : 'auth.account_suspended',
+            language,
+          ),
+        );
+      }
 
       const newToken = this.jwtService.sign(
         { sellerId: payload.sellerId },

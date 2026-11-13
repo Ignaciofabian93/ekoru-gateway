@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithTimeout } from '../common/fetch-with-timeout';
 
 /** The request signals we can describe a sign-in with. */
 export interface LoginAlertDetails {
@@ -97,7 +98,7 @@ export class NotificationsClient {
     query: string,
     variables: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    const res = await fetch(this._usersUrl(), {
+    const res = await fetchWithTimeout(this._usersUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

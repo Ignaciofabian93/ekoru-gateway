@@ -9,11 +9,23 @@ import {
   Body,
   Headers,
   Logger,
+  PayloadTooLargeException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { PaymentsService } from './payments.service';
 
 type ProviderId = 'WEBPAY' | 'KHIPU' | 'MERCADOPAGO';
+
+/**
+ * Largest webhook body passed on. A provider's notice is a few hundred bytes;
+ * the routes are public, so anything bigger is someone else's (TRX-25).
+ */
+export const MAX_WEBHOOK_BYTES = 64 * 1024;
+
+/** True when the body the provider signed is over the limit. */
+function webhookTooLarge(req: { rawBody?: string }): boolean {
+  return Buffer.byteLength(req.rawBody ?? '', 'utf8') > MAX_WEBHOOK_BYTES;
+}
 
 /** Both interpolated values reach an HTML attribute, so quotes must not escape it. */
 function escapeHtmlAttr(value: string): string {
@@ -98,6 +110,9 @@ export class PaymentsController {
     @Headers('x-khipu-signature') signature: string,
     @Body() body: Record<string, unknown>,
   ) {
+    if (webhookTooLarge(req)) {
+      throw new PayloadTooLargeException('Webhook body too large');
+    }
     if (!signature) {
       this.logger.warn('Khipu webhook missing x-khipu-signature');
       return { ok: false };
@@ -144,6 +159,9 @@ export class PaymentsController {
       (req.query['type'] as string) ??
       (req.query['topic'] as string) ??
       'notification';
+    if (webhookTooLarge(req)) {
+      return res.status(413).json({ ok: false });
+    }
     if (!body || Object.keys(body).length === 0) {
       return res.status(400).json({ ok: false });
     }

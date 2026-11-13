@@ -14,6 +14,7 @@ import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImageEntity, ImageProcessorClient } from './image-processor.client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { MAX_ITEM_IMAGES } from './panel-business-images.controller';
 import {
   declaredImageFilter,
   assertRealImage,
@@ -75,6 +76,17 @@ export class BusinessImageController {
       await assertOwnsService(this.prisma, numericItemId, sellerId);
     }
 
+    // The same 3 photos per listing as the web and the panel (GW-7). This
+    // route kept adding to the list, so one account could fill the bucket.
+    if ((await this.imageCount(itemType, numericItemId)) >= MAX_ITEM_IMAGES) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        code: 'TOO_MANY_IMAGES',
+        message: `At most ${MAX_ITEM_IMAGES} photos per listing`,
+      });
+    }
+
     const entity: ImageEntity = itemType === 'service' ? 'service' : 'product';
     const processed = await this.imageProcessor.upload(file, entity, itemId);
 
@@ -89,6 +101,21 @@ export class BusinessImageController {
       width: processed.width,
       height: processed.height,
     };
+  }
+
+  /** How many photos the listing already has. */
+  private async imageCount(itemType: string, itemId: number): Promise<number> {
+    const item =
+      itemType === 'storeProduct'
+        ? await this.prisma.storeProduct.findUnique({
+            where: { id: itemId },
+            select: { images: true },
+          })
+        : await this.prisma.service.findUnique({
+            where: { id: itemId },
+            select: { images: true },
+          });
+    return item?.images?.length ?? 0;
   }
 
   /**

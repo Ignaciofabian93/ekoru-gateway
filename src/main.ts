@@ -7,6 +7,9 @@ import helmet from 'helmet';
 import type { IncomingMessage } from 'http';
 import { metricsGuard } from './middleware/metrics-guard';
 
+/** Largest JSON or form body the gateway parses. */
+const BODY_LIMIT = '1mb';
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
@@ -67,7 +70,10 @@ async function bootstrap() {
   // Cookie parser middleware
   app.use(cookieParser());
 
-  // Increase payload limits.
+  // Bodies up to 1 MB, like every subgraph (GW-6). It was 20 MB, parsed on
+  // every route before any check, so a few large posts at once could use up
+  // the container's memory. Photos don't come through here: they are multipart
+  // and multer takes them, 10 MB each.
   //
   // `verify` runs before the JSON is parsed and is the only place the exact
   // bytes are still available. Provider webhook signatures are HMACs over
@@ -75,7 +81,7 @@ async function bootstrap() {
   // whitespace and never match. Stashed on the request and forwarded to the
   // transactions subgraph, which owns the verification.
   app.useBodyParser('json', {
-    limit: '20mb',
+    limit: BODY_LIMIT,
     verify: (
       req: IncomingMessage & { rawBody?: string },
       _res,
@@ -84,7 +90,7 @@ async function bootstrap() {
       if (buf?.length) req.rawBody = buf.toString('utf8');
     },
   });
-  app.useBodyParser('urlencoded', { limit: '20mb', extended: true });
+  app.useBodyParser('urlencoded', { limit: BODY_LIMIT, extended: true });
 
   // On `docker stop`, finish the requests and jobs in progress, then exit.
   app.enableShutdownHooks(['SIGTERM', 'SIGINT']);

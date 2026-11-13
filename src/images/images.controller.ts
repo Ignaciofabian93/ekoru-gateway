@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ImageProcessorClient } from './image-processor.client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtAdminGuard } from '../auth/guards/jwt-admin.guard';
+import { PlatformArtworkGuard } from './platform-artwork.guard';
 import {
   declaredImageFilter,
   assertRealImage,
@@ -89,11 +90,13 @@ export class ImagesController {
   }
 
   /**
-   * Catalog/department artwork is a platform asset, not a seller's, so this is
-   * staff-only rather than merely signed-in.
+   * Catalog artwork and blog and event covers are platform assets, not a
+   * seller's, so this is for EKORU staff with one of those jobs
+   * (`PlatformArtworkGuard`), not for any admin token: a business's panel
+   * accounts hold one too.
    */
   @Post('upload/department')
-  @UseGuards(JwtAdminGuard)
+  @UseGuards(JwtAdminGuard, PlatformArtworkGuard)
   @UseInterceptors(FileInterceptor('image', UPLOAD_OPTIONS))
   async uploadDepartmentImage(
     @UploadedFile() file: Express.Multer.File,

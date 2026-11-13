@@ -19,6 +19,7 @@ describe('AuthService', () => {
   let configService: ConfigService;
   let i18nService: I18nService;
   let notificationsClient: { sendLoginAlert: jest.Mock };
+  let testingModule: TestingModule;
 
   const mockSeller = {
     id: 'seller-123',
@@ -69,6 +70,14 @@ describe('AuthService', () => {
               // Login now writes to the seller row: it clears the brute-force
               // counter and stamps lastLoginAt on success, and increments the
               // counter on failure.
+              update: jest.fn().mockResolvedValue(undefined),
+            },
+            // No ban unless a test says so (USR-17).
+            bannedSeller: {
+              findFirst: jest.fn().mockResolvedValue(null),
+            },
+            admin: {
+              findUnique: jest.fn(),
               update: jest.fn().mockResolvedValue(undefined),
             },
           },
@@ -129,6 +138,7 @@ describe('AuthService', () => {
         },
       ],
     }).compile();
+    testingModule = module;
 
     service = module.get<AuthService>(AuthService);
     prismaService = module.get<PrismaService>(PrismaService);
@@ -446,7 +456,304 @@ describe('AuthService', () => {
     });
   });
 
+  describe('login of a banned seller (USR-17)', () => {
+    const ban = { id: 'ban-1' };
+
+    it('refuses a banned seller after a correct password, without issuing tokens', async () => {
+      const res = mockResponse();
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      const findBan = jest
+        .spyOn(prismaService.bannedSeller, 'findFirst')
+        .mockResolvedValue(ban as never);
+      const signSpy = jest.spyOn(jwtService, 'sign');
+
+      await expect(
+        service.login('test@example.com', 'password123', res),
+      ).rejects.toThrow(new BadRequestException('auth.account_suspended'));
+
+      expect(signSpy).not.toHaveBeenCalled();
+      expect(res.cookie as jest.Mock).not.toHaveBeenCalled();
+      expect(notificationsClient.sendLoginAlert).not.toHaveBeenCalled();
+      // Only a ban in force counts: active, and with no end date or one ahead.
+      expect(findBan).toHaveBeenCalledWith({
+        where: {
+          sellerId: 'seller-123',
+          isActive: true,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: expect.any(Date) as Date } },
+          ],
+        },
+        select: { id: true },
+      });
+    });
+
+    it('does not reveal the ban to a wrong password', async () => {
+      const res = mockResponse();
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+      const findBan = jest
+        .spyOn(prismaService.bannedSeller, 'findFirst')
+        .mockResolvedValue(ban as never);
+
+      await expect(
+        service.login('test@example.com', 'wrongpassword', res),
+      ).rejects.toThrow('Credenciales inválidas');
+      expect(findBan).not.toHaveBeenCalled();
+    });
+
+    it('lets a seller who paused their own account sign in to resume it', async () => {
+      const res = mockResponse();
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue({ ...mockSeller, isActive: false });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest.spyOn(jwtService, 'sign').mockReturnValue('token');
+
+      await expect(
+        service.login('test@example.com', 'password123', res),
+      ).resolves.toEqual(expect.objectContaining({ token: 'token' }));
+    });
+
+    it('stops sign-in when the bans cannot be read, instead of letting everyone in', async () => {
+      const res = mockResponse();
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest
+        .spyOn(prismaService.bannedSeller, 'findFirst')
+        .mockRejectedValue(
+          new Error('permission denied for table BannedSeller'),
+        );
+
+      await expect(
+        service.login('test@example.com', 'password123', res),
+      ).rejects.toThrow('permission denied');
+      expect(res.cookie as jest.Mock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('loginAdmin (GW-5)', () => {
+    const mockAdmin = {
+      id: 'admin-1',
+      email: 'admin@ekoru.cl',
+      password: '$2b$10$hashedpassword',
+      role: 'SUPER_ADMIN',
+      adminType: 'PLATFORM',
+      sellerId: null,
+      isActive: true,
+      accountLocked: false,
+      loginAttempts: 0,
+      lockedUntil: null,
+    };
+    const findAdmin = (admin: object | null) =>
+      jest
+        .spyOn(prismaService.admin, 'findUnique')
+        .mockResolvedValue(admin as never);
+    const lastUpdate = () => {
+      const calls = (prismaService.admin.update as jest.Mock).mock
+        .calls as Array<
+        [{ data: { loginAttempts?: number; lockedUntil?: Date | null } }]
+      >;
+      return calls[calls.length - 1][0];
+    };
+
+    it('signs in with the right password and clears the counter and the lock', async () => {
+      const res = mockResponse();
+      findAdmin({
+        ...mockAdmin,
+        loginAttempts: 8,
+        lockedUntil: new Date(Date.now() - 1_000), // a lock that has run out
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      jest
+        .spyOn(jwtService, 'sign')
+        .mockReturnValueOnce('access-token')
+        .mockReturnValueOnce('refresh-token');
+
+      const result = await service.loginAdmin('Admin@Ekoru.cl', 'secret', res);
+
+      expect(result.token).toBe('access-token');
+      expect(prismaService.admin.findUnique).toHaveBeenCalledWith({
+        where: { email: 'admin@ekoru.cl' },
+      });
+      expect(lastUpdate().data).toEqual(
+        expect.objectContaining({ loginAttempts: 0, lockedUntil: null }),
+      );
+      expect(res.cookie as jest.Mock).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives the same answer for an unknown address as for a wrong password', async () => {
+      const res = mockResponse();
+      const compareSpy = bcrypt.compare as jest.Mock;
+      compareSpy.mockClear();
+      compareSpy.mockResolvedValue(false);
+
+      findAdmin(null);
+      const unknownAddress = await service
+        .loginAdmin('nobody@ekoru.cl', 'secret', res)
+        .catch((err: Error) => err);
+      // An unknown address still costs a real compare, so timing tells nothing.
+      expect(compareSpy).toHaveBeenCalledTimes(1);
+
+      findAdmin(mockAdmin);
+      const wrongPassword = await service
+        .loginAdmin('admin@ekoru.cl', 'wrong', res)
+        .catch((err: Error) => err);
+
+      expect(unknownAddress).toBeInstanceOf(BadRequestException);
+      expect((unknownAddress as Error).message).toBe('Credenciales inválidas');
+      expect((wrongPassword as Error).message).toBe(
+        (unknownAddress as Error).message,
+      );
+    });
+
+    it('counts a wrong password without locking below the threshold', async () => {
+      findAdmin({ ...mockAdmin, loginAttempts: 2 });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.loginAdmin('admin@ekoru.cl', 'wrong', mockResponse()),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(lastUpdate().data).toEqual({
+        loginAttempts: 3,
+        lockedUntil: null,
+      });
+    });
+
+    it('locks the account for 15 minutes on the 8th wrong password', async () => {
+      findAdmin({ ...mockAdmin, loginAttempts: 7 });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+      const before = Date.now();
+
+      await expect(
+        service.loginAdmin('admin@ekoru.cl', 'wrong', mockResponse()),
+      ).rejects.toThrow(BadRequestException);
+
+      const { loginAttempts, lockedUntil } = lastUpdate().data;
+      expect(loginAttempts).toBe(8);
+      const minutes = ((lockedUntil as Date).getTime() - before) / 60_000;
+      expect(minutes).toBeGreaterThanOrEqual(15);
+      expect(minutes).toBeLessThan(15.1);
+    });
+
+    it('refuses a locked account before checking the password', async () => {
+      findAdmin({
+        ...mockAdmin,
+        loginAttempts: 8,
+        lockedUntil: new Date(Date.now() + 60_000),
+      });
+      const compareSpy = bcrypt.compare as jest.Mock;
+      compareSpy.mockClear();
+
+      await expect(
+        service.loginAdmin('admin@ekoru.cl', 'secret', mockResponse()),
+      ).rejects.toThrow(new BadRequestException('auth.account_locked'));
+      expect(compareSpy).not.toHaveBeenCalled();
+      expect(prismaService.admin.update).not.toHaveBeenCalled();
+    });
+
+    it('locks again at once on a wrong password after the lock ran out', async () => {
+      findAdmin({
+        ...mockAdmin,
+        loginAttempts: 8,
+        lockedUntil: new Date(Date.now() - 1_000),
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.loginAdmin('admin@ekoru.cl', 'wrong', mockResponse()),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(lastUpdate().data.loginAttempts).toBe(9);
+      expect(lastUpdate().data.lockedUntil).toBeInstanceOf(Date);
+    });
+
+    it.each([
+      ['a disabled account', { isActive: false }, 'auth.account_disabled'],
+      ['one locked by hand', { accountLocked: true }, 'auth.account_locked'],
+    ])(
+      'says %s only to whoever knows the password',
+      async (_label, state, key) => {
+        findAdmin({ ...mockAdmin, ...state });
+        const signSpy = jest.spyOn(jwtService, 'sign');
+
+        (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+        await expect(
+          service.loginAdmin('admin@ekoru.cl', 'wrong', mockResponse()),
+        ).rejects.toThrow('Credenciales inválidas');
+
+        (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+        await expect(
+          service.loginAdmin('admin@ekoru.cl', 'secret', mockResponse()),
+        ).rejects.toThrow(new BadRequestException(key));
+        expect(signSpy).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('refreshToken of a banned or deleted seller (USR-17)', () => {
+    const refuse = async (key: string) => {
+      const res = mockResponse();
+      jest
+        .spyOn(jwtService, 'verify')
+        .mockReturnValue({ sellerId: 'seller-123' });
+      const signSpy = jest.spyOn(jwtService, 'sign');
+      const tokens = testingModule.get<TokenRepository>(TokenRepository);
+
+      await expect(service.refreshToken('old-token', res)).rejects.toThrow(
+        new UnauthorizedException(key),
+      );
+
+      // The used token is spent, and nothing replaces it.
+      expect(tokens.revoke).toHaveBeenCalledWith('old-token');
+      expect(tokens.save).not.toHaveBeenCalled();
+      expect(signSpy).not.toHaveBeenCalled();
+      expect(res.cookie as jest.Mock).not.toHaveBeenCalled();
+    };
+
+    it('ends the session of a banned seller', async () => {
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      jest
+        .spyOn(prismaService.bannedSeller, 'findFirst')
+        .mockResolvedValue({ id: 'ban-1' } as never);
+
+      await refuse('auth.account_suspended');
+    });
+
+    it('ends the session of a deleted account', async () => {
+      jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue({
+        ...mockSeller,
+        email: 'deleted+seller-123@deleted.ekoru',
+      });
+
+      await refuse('auth.account_disabled');
+    });
+
+    it('ends the session of a seller that no longer exists', async () => {
+      jest.spyOn(prismaService.seller, 'findUnique').mockResolvedValue(null);
+
+      await refuse('auth.account_disabled');
+    });
+  });
+
   describe('refreshToken', () => {
+    // Every refresh re-reads the seller (USR-17).
+    beforeEach(() => {
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+    });
+
     it('should refresh token successfully with valid refresh token', async () => {
       const res = mockResponse();
       jest
