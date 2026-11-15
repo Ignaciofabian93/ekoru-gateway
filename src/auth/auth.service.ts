@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { JsonWebTokenError, TokenExpiredError } from 'jsonwebtoken';
 import { ConfigService } from '@nestjs/config';
 import { compare } from 'bcrypt';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Response } from 'express';
 import { I18nService } from '../common/i18n';
@@ -191,10 +192,17 @@ export class AuthService {
     return ban !== null;
   }
 
+  /**
+   * Each refresh token carries a random `jti` (GW-8). Without it a token was
+   * only the account id and the second it was signed, so two signed for one
+   * account in the same second were the same string: saving the second failed
+   * the unique key on `RefreshToken.token`, and that sign-in or renewal failed.
+   */
   private signRefreshToken(payload: Record<string, string>): string {
     return this.jwtService.sign(payload, {
       secret: this.refreshSecret,
       expiresIn: '7d',
+      jwtid: randomUUID(),
     });
   }
 

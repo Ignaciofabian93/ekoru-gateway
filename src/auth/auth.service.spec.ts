@@ -836,6 +836,44 @@ describe('AuthService', () => {
     });
   });
 
+  describe('refresh tokens signed in the same second (GW-8)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('gives two sign-ins of one account two different refresh tokens', async () => {
+      // A real signer: the bug lived in what the token contained.
+      const realJwt = new JwtService({ secret: 'test-access-secret' });
+      jest
+        .spyOn(jwtService, 'sign')
+        .mockImplementation((payload, options) =>
+          realJwt.sign(payload as Record<string, string>, options),
+        );
+      // Both sign-ins in the same second, as when two tabs sign in at once.
+      jest.spyOn(Date, 'now').mockReturnValue(1_763_164_800_000);
+      jest
+        .spyOn(prismaService.seller, 'findUnique')
+        .mockResolvedValue(mockSeller);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      const tokenRepository = testingModule.get(TokenRepository);
+
+      await service.login('test@example.com', 'password123', mockResponse());
+      await service.login('test@example.com', 'password123', mockResponse());
+
+      const saved = (tokenRepository.save as jest.Mock).mock.calls.map(
+        ([token]) => token as string,
+      );
+      expect(saved).toHaveLength(2);
+      expect(saved[0]).not.toEqual(saved[1]);
+      const claims = saved.map((token) =>
+        realJwt.decode<{ jti?: string; iat: number }>(token),
+      );
+      expect(claims[0].iat).toEqual(claims[1].iat);
+      expect(claims[0].jti).toEqual(expect.any(String));
+      expect(claims[0].jti).not.toEqual(claims[1].jti);
+    });
+  });
+
   describe('decodeToken', () => {
     it('should decode valid JWT token', () => {
       jest
